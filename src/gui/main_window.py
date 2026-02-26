@@ -3,54 +3,40 @@ from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 import sys
 import os
-
-# Импорты модулей
 from core.config import ConfigManager
 from core.events import EventSystem, EventType
 from database.db import DatabaseManager
 
 
 class MainWindow:
-    """Главное окно приложения"""
-
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("CryptoSafe Manager v1.0")
         self.root.geometry("1200x800")
         self.root.minsize(900, 600)
 
-        # Менеджеры
         self.config = ConfigManager()
         self.events = EventSystem()
         self.db_path = None
         self.db: DatabaseManager = None
         self.master_password = None
-
         self.setup_ui()
         self.check_first_run()
 
     def setup_ui(self):
-        """Настройка интерфейса"""
-        # Меню
         self.setup_menu()
-
-        # Центральный фрейм
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
         # Таблица записей
         columns = ('id', 'title', 'username', 'url')
         self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=20)
-
         for col in columns:
             self.tree.heading(col, text=col.capitalize())
             self.tree.column(col, width=150)
-
         # Скроллбары
         v_scroll = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
         h_scroll = ttk.Scrollbar(main_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
         self.tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
-
         self.tree.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
         v_scroll.grid(row=0, column=1, sticky='ns')
         h_scroll.grid(row=1, column=0, sticky='ew')
@@ -73,10 +59,9 @@ class MainWindow:
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def setup_menu(self):
-        """Настройка меню"""
+        #Настройка меню
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-
         # Файл
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Файл", menu=file_menu)
@@ -84,27 +69,23 @@ class MainWindow:
         file_menu.add_command(label="Открыть базу...", command=self.open_database)
         file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self.root.quit)
-
         # Правка
         edit_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Правка", menu=edit_menu)
         edit_menu.add_command(label="Добавить запись", command=self.add_entry)
         edit_menu.add_command(label="Журнал аудита", command=self.show_audit_log)
-
         # Вид
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Вид", menu=view_menu)
         view_menu.add_command(label="Настройки", command=self.show_settings)
-
     def check_first_run(self):
-        """Проверка первого запуска"""
+        #проверка первого запуска
         if not self.config.db_path:
             self.show_setup_wizard()
         else:
             self.open_database()
 
     def show_setup_wizard(self):
-        """Мастер первоначальной настройки"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Первоначальная настройка")
         dialog.geometry("500x400")
@@ -113,7 +94,6 @@ class MainWindow:
 
         ttk.Label(dialog, text="Добро пожаловать в CryptoSafe Manager!",
                   font=('Arial', 14, 'bold')).pack(pady=20)
-
         # Мастер-пароль
         ttk.Label(dialog, text="Мастер-пароль (невозможно восстановить!):").pack(pady=5)
         pass_frame = ttk.Frame(dialog)
@@ -233,7 +213,6 @@ class MainWindow:
         # TODO: Загрузить из БД
 
     def run(self):
-        """Запуск приложения"""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
 

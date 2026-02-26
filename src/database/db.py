@@ -4,11 +4,7 @@ from pathlib import Path
 from typing import Optional  # ← ТОЛЬКО Optional!
 from core.crypto.placeholder import AES256Placeholder
 from core.key_manager import KeyManager
-
-
 class DatabaseManager:
-    """Потокобезопасный менеджер SQLite"""
-
     def __init__(self, db_path: str):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -16,33 +12,24 @@ class DatabaseManager:
         self._conn: Optional[sqlite3.Connection] = None
         self.crypto = AES256Placeholder()
         self.master_key: Optional[bytes] = None
-
     def __enter__(self) -> 'DatabaseManager':
         self.connect()
         return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-
     def connect(self):
-        """Подключение к БД"""
         with self._lock:
             if self._conn is None:
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._init_schema()
-
     def close(self):
-        """Закрытие соединения"""
         with self._lock:
             if self._conn:
                 self._conn.close()
                 self._conn = None
-
     def _init_schema(self):
-        """Инициализация схемы БД"""
         if self._conn:
             cursor = self._conn.cursor()
-
             # Таблица записей хранилища
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS vault_entries (
@@ -57,7 +44,6 @@ class DatabaseManager:
                     tags TEXT DEFAULT ''
                 )
             """)
-
             # Журнал аудита
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS audit_log (
@@ -69,7 +55,6 @@ class DatabaseManager:
                     signature BLOB
                 )
             """)
-
             # Настройки
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
@@ -79,7 +64,6 @@ class DatabaseManager:
                     encrypted BOOLEAN DEFAULT 0
                 )
             """)
-
             # Хранилище ключей
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS key_store (
@@ -90,23 +74,15 @@ class DatabaseManager:
                     params TEXT
                 )
             """)
-
             self._conn.commit()
-
     def set_master_password(self, password: str):
-        """Установка мастер-пароля"""
         salt = KeyManager.generate_salt()
         self.master_key = KeyManager.derive_key(password, salt)
-        # Сохранить соль в key_store (заглушка)
-
     def encrypt_field(self, data: str) -> bytes:
-        """Шифрование поля"""
         if not self.master_key:
             raise ValueError("Мастер-пароль не установлен")
         return self.crypto.encrypt(data.encode(), self.master_key)
-
     def decrypt_field(self, encrypted_data: bytes) -> str:
-        """Дешифрование поля"""
         if not self.master_key:
             raise ValueError("Мастер-пароль не установлен")
         return self.crypto.decrypt(encrypted_data, self.master_key).decode()
