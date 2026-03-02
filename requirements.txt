@@ -1,0 +1,15 @@
+# Core dependencies
+sqlite3  # встроенный
+tkinter  # встроенный
+
+# Security (будут использоваться в следующих спринтах)
+cryptography>=41.0.0  # для AES-GCM в Sprint 3
+argon2-cffi>=21.3.0   # для Argon2 в Sprint 2
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Development
+black>=23.0.0
+mypy>=1.5.0
