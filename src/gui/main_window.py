@@ -3,6 +3,10 @@ from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 import sys
 import os
+
+# Добавляем путь к src для импортов
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from core.config import ConfigManager
 from core.events import EventSystem, EventType
 from database.db import DatabaseManager
@@ -18,137 +22,273 @@ class MainWindow:
         self.config = ConfigManager()
         self.events = EventSystem()
         self.db_path = None
-        self.db: DatabaseManager = None
+        self.db = None
         self.master_password = None
+
         self.setup_ui()
         self.check_first_run()
 
     def setup_ui(self):
+        """Настройка пользовательского интерфейса"""
         self.setup_menu()
+
+        # Главный контейнер - используем GRID для всего
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
+        # Основной фрейм
         main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        # Таблица записей
-        columns = ('id', 'title', 'username', 'url')
-        self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=20)
-        for col in columns:
-            self.tree.heading(col, text=col.capitalize())
-            self.tree.column(col, width=150)
+        main_frame.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
+
+        # Настройка сетки для main_frame
+        main_frame.grid_rowconfigure(1, weight=1)  # строка с таблицей растягивается
+        main_frame.grid_columnconfigure(0, weight=1)  # колонка с таблицей растягивается
+
+        # Панель инструментов (grid row=0)
+        toolbar = ttk.Frame(main_frame)
+        toolbar.grid(row=0, column=0, sticky='ew', pady=(0, 10))
+
+        ttk.Button(toolbar, text="➕ Добавить", command=self.add_entry).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="✏️ Редактировать", command=self.edit_entry).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="🗑️ Удалить", command=self.delete_entry).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="🔄 Обновить", command=self.refresh_entries).pack(side=tk.LEFT, padx=2)
+
+        # Поиск
+        ttk.Label(toolbar, text="Поиск:").pack(side=tk.LEFT, padx=(20, 5))
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', lambda *args: self._on_search())
+        search_entry = ttk.Entry(toolbar, textvariable=self.search_var, width=30)
+        search_entry.pack(side=tk.LEFT)
+
+        # Таблица записей (grid row=1)
+        columns = ('id', 'title', 'username', 'url', 'updated_at')
+        self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=20, selectmode='browse')
+
+        # Настройка заголовков
+        self.tree.heading('id', text='ID', command=lambda: self._sort_tree('id', False))
+        self.tree.heading('title', text='Название', command=lambda: self._sort_tree('title', False))
+        self.tree.heading('username', text='Пользователь', command=lambda: self._sort_tree('username', False))
+        self.tree.heading('url', text='URL', command=lambda: self._sort_tree('url', False))
+        self.tree.heading('updated_at', text='Обновлено', command=lambda: self._sort_tree('updated_at', False))
+
+        # Настройка ширины колонок
+        self.tree.column('id', width=50, anchor='center')
+        self.tree.column('title', width=200)
+        self.tree.column('username', width=150)
+        self.tree.column('url', width=200)
+        self.tree.column('updated_at', width=150, anchor='center')
+
         # Скроллбары
         v_scroll = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
         h_scroll = ttk.Scrollbar(main_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
         self.tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
-        self.tree.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
-        v_scroll.grid(row=0, column=1, sticky='ns')
-        h_scroll.grid(row=1, column=0, sticky='ew')
 
-        # Кнопки действий
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.grid(row=2, column=0, sticky='w', pady=(10, 0))
+        # Размещение таблицы и скроллбаров в grid
+        self.tree.grid(row=1, column=0, sticky='nsew')
+        v_scroll.grid(row=1, column=1, sticky='ns')
+        h_scroll.grid(row=2, column=0, sticky='ew')
 
-        ttk.Button(btn_frame, text="Добавить", command=self.add_entry).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="Редактировать", command=self.edit_entry).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="Удалить", command=self.delete_entry).pack(side=tk.LEFT, padx=(0, 5))
+        # Привязка двойного клика
+        self.tree.bind('<Double-1>', lambda e: self.edit_entry())
 
-        # Настройка растягивания
-        main_frame.grid_rowconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(0, weight=1)
-
-        # Строка состояния
+        # Строка состояния (отдельно от main_frame, используем grid для root)
         self.status_var = tk.StringVar(value="Готов")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        status_bar.grid(row=1, column=0, sticky='ew')
 
     def setup_menu(self):
-        #Настройка меню
+        """Настройка меню"""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
+
         # Файл
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Файл", menu=file_menu)
-        file_menu.add_command(label="Новая база...", command=self.new_database)
-        file_menu.add_command(label="Открыть базу...", command=self.open_database)
+        file_menu.add_command(label="Новая база...", command=self.new_database, accelerator="Ctrl+N")
+        file_menu.add_command(label="Открыть базу...", command=self.open_database, accelerator="Ctrl+O")
+        file_menu.add_command(label="Создать резервную копию...", command=self.backup_database)
+        file_menu.add_command(label="Восстановить из копии...", command=self.restore_database)
         file_menu.add_separator()
-        file_menu.add_command(label="Выход", command=self.root.quit)
+        file_menu.add_command(label="Выход", command=self.on_closing, accelerator="Ctrl+Q")
+
         # Правка
         edit_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Правка", menu=edit_menu)
-        edit_menu.add_command(label="Добавить запись", command=self.add_entry)
+        edit_menu.add_command(label="Добавить запись", command=self.add_entry, accelerator="Ctrl+Ins")
+        edit_menu.add_command(label="Редактировать запись", command=self.edit_entry, accelerator="F2")
+        edit_menu.add_command(label="Удалить запись", command=self.delete_entry, accelerator="Del")
+        edit_menu.add_separator()
         edit_menu.add_command(label="Журнал аудита", command=self.show_audit_log)
+
         # Вид
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Вид", menu=view_menu)
+        view_menu.add_command(label="Обновить", command=self.refresh_entries, accelerator="F5")
         view_menu.add_command(label="Настройки", command=self.show_settings)
+
+        # Справка
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Справка", menu=help_menu)
+        help_menu.add_command(label="О программе", command=self.show_about)
+
+        # Привязка горячих клавиш
+        self.root.bind('<Control-n>', lambda e: self.new_database())
+        self.root.bind('<Control-o>', lambda e: self.open_database())
+        self.root.bind('<Control-q>', lambda e: self.on_closing())
+        self.root.bind('<Control-Insert>', lambda e: self.add_entry())
+        self.root.bind('<F2>', lambda e: self.edit_entry())
+        self.root.bind('<Delete>', lambda e: self.delete_entry())
+        self.root.bind('<F5>', lambda e: self.refresh_entries())
+
+    def _sort_tree(self, col, reverse):
+        """Сортировка таблицы по колонке"""
+        data = [(self.tree.set(child, col), child) for child in self.tree.get_children('')]
+        data.sort(reverse=reverse)
+
+        for index, (val, child) in enumerate(data):
+            self.tree.move(child, '', index)
+
+        self.tree.heading(col, command=lambda: self._sort_tree(col, not reverse))
+
+    def _on_search(self):
+        """Фильтрация записей по поиску"""
+        search_text = self.search_var.get().lower()
+        for item in self.tree.get_children():
+            values = self.tree.item(item)['values']
+            if len(values) >= 3:
+                if (search_text in str(values[1]).lower() or  # title
+                        search_text in str(values[2]).lower()):  # username
+                    self.tree.reattach(item, '', self.tree.index(item))
+                else:
+                    self.tree.detach(item)
+
     def check_first_run(self):
-        #проверка первого запуска
+        """Проверка первого запуска"""
         if not self.config.db_path:
             self.show_setup_wizard()
         else:
             self.open_database()
 
     def show_setup_wizard(self):
+        """Мастер первоначальной настройки"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Первоначальная настройка")
-        dialog.geometry("500x400")
+        dialog.geometry("600x500")
         dialog.transient(self.root)
         dialog.grab_set()
 
+        # Заголовок
         ttk.Label(dialog, text="Добро пожаловать в CryptoSafe Manager!",
-                  font=('Arial', 14, 'bold')).pack(pady=20)
-        # Мастер-пароль
-        ttk.Label(dialog, text="Мастер-пароль (невозможно восстановить!):").pack(pady=5)
-        pass_frame = ttk.Frame(dialog)
-        pass_frame.pack(pady=10, padx=20, fill=tk.X)
+                  font=('Arial', 16, 'bold')).pack(pady=20)
+
+        # Notebook для вкладок
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # Вкладка 1: Мастер-пароль
+        tab1 = ttk.Frame(notebook)
+        notebook.add(tab1, text="Мастер-пароль")
+
+        ttk.Label(tab1, text="Создайте мастер-пароль (невозможно восстановить!):",
+                  font=('Arial', 10)).pack(pady=20)
 
         from gui.widgets.password_entry import PasswordEntry
+
+        pass_frame = ttk.Frame(tab1)
+        pass_frame.pack(pady=10, padx=20, fill=tk.X)
+
+        ttk.Label(pass_frame, text="Пароль:").pack(anchor=tk.W)
         self.master_pass_entry = PasswordEntry(pass_frame)
-        self.master_pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.master_pass_entry.pack(fill=tk.X, pady=(0, 10))
 
-        confirm_pass_entry = PasswordEntry(pass_frame)
-        confirm_pass_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        ttk.Label(pass_frame, text="Подтверждение:").pack(anchor=tk.W)
+        self.confirm_pass_entry = PasswordEntry(pass_frame)
+        self.confirm_pass_entry.pack(fill=tk.X)
 
-        # Путь к БД
-        ttk.Label(dialog, text="Расположение базы данных:").pack(pady=(20, 5))
-        db_frame = ttk.Frame(dialog)
+        # Вкладка 2: База данных
+        tab2 = ttk.Frame(notebook)
+        notebook.add(tab2, text="База данных")
+
+        ttk.Label(tab2, text="Расположение базы данных:").pack(pady=20)
+
+        db_frame = ttk.Frame(tab2)
         db_frame.pack(pady=5, padx=20, fill=tk.X)
 
         self.db_path_entry = ttk.Entry(db_frame)
         self.db_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Устанавливаем путь по умолчанию
+        default_db_path = os.path.join(os.path.expanduser("~"), "cryptosafe.db")
+        self.db_path_entry.insert(0, default_db_path)
+
         ttk.Button(db_frame, text="Обзор...",
-                   command=lambda: self.browse_db_path(self.db_path_entry)).pack(side=tk.RIGHT)
+                   command=lambda: self.browse_db_path(self.db_path_entry)).pack(side=tk.RIGHT, padx=(5, 0))
 
-        def setup():
-            password = self.master_pass_entry.get()
-            confirm_password = confirm_pass_entry.get()
+        # Кнопки
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=20, pady=20)
 
-            if not password:
-                messagebox.showerror("Ошибка", "Мастер-пароль обязателен!")
-                return
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Создать", command=lambda: self._finish_setup(dialog)).pack(side=tk.RIGHT)
 
-            if password != confirm_password:
-                messagebox.showerror("Ошибка", "Пароли не совпадают!")
-                return
+    def _finish_setup(self, dialog):
+        """Завершение настройки"""
+        password = self.master_pass_entry.get()
+        confirm_password = self.confirm_pass_entry.get()
 
-            db_path = self.db_path_entry.get().strip()
-            if not db_path:
-                messagebox.showerror("Ошибка", "Выберите путь к базе данных!")
-                return
+        if not password:
+            messagebox.showerror("Ошибка", "Мастер-пароль обязателен!")
+            return
 
-            try:
-                self.config.db_path = db_path
-                self.master_password = password
-                self.open_database()
-                dialog.destroy()
-                messagebox.showinfo("Успех", "Настройка завершена!")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось создать базу: {str(e)}")
+        if password != confirm_password:
+            messagebox.showerror("Ошибка", "Пароли не совпадают!")
+            return
 
-        ttk.Button(dialog, text="Создать", command=setup).pack(pady=30)
+        if len(password) < 8:
+            messagebox.showerror("Ошибка", "Пароль должен быть не менее 8 символов!")
+            return
+
+        db_path = self.db_path_entry.get().strip()
+        if not db_path:
+            messagebox.showerror("Ошибка", "Выберите путь к базе данных!")
+            return
+
+        try:
+            # Проверяем и корректируем путь
+            if os.path.isdir(db_path):
+                db_path = os.path.join(db_path, "cryptosafe.db")
+
+            if not db_path.endswith('.db'):
+                db_path += '.db'
+
+            print(f"Создание БД по пути: {db_path}")
+
+            # Сохраняем настройки
+            self.config.db_path = db_path
+            self.master_password = password
+
+            # Создаем и инициализируем БД
+            from database.db import DatabaseManager
+            self.db = DatabaseManager(db_path)
+            self.db.set_master_password(password)
+            self.db.connect()  # Это создаст файл и таблицы
+
+            dialog.destroy()
+            self.refresh_entries()
+            messagebox.showinfo("Успех", "Настройка завершена!\nБаза данных создана.")
+
+        except Exception as e:
+            print(f"Ошибка создания БД: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось создать базу: {str(e)}")
 
     def browse_db_path(self, entry):
         """Выбор файла БД"""
         path = filedialog.asksaveasfilename(
             defaultextension=".db",
-            filetypes=[("SQLite DB", "*.db"), ("All", "*.*")]
+            filetypes=[("SQLite DB", "*.db"), ("All files", "*.*")],
+            title="Сохранить базу данных как"
         )
         if path:
             entry.delete(0, tk.END)
@@ -160,63 +300,264 @@ class MainWindow:
 
     def open_database(self):
         """Открыть существующую базу"""
-        if self.config.db_path:
-            try:
-                self.db = DatabaseManager(self.config.db_path)
-                self.db.set_master_password(self.master_password or "temp")
-                self.status_var.set(f"База данных: {self.config.db_path}")
-                self.refresh_entries()
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось открыть базу: {str(e)}")
+        if not self.config.db_path:
+            return
+
+        try:
+            from database.db import DatabaseManager
+
+            db_path = self.config.db_path
+            print(f"Попытка открыть БД: {db_path}")
+
+            # Проверяем и корректируем путь
+            if os.path.isdir(db_path):
+                db_path = os.path.join(db_path, "cryptosafe.db")
+                self.config.db_path = db_path
+                print(f"Путь скорректирован: {db_path}")
+
+            self.db = DatabaseManager(db_path)
+
+            if self.master_password:
+                self.db.set_master_password(self.master_password)
+
+            self.db.connect()
+
+            self.status_var.set(f"База данных: {db_path}")
+            self.refresh_entries()
+            print("База данных успешно открыта")
+
+        except Exception as e:
+            print(f"Ошибка открытия БД: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось открыть базу: {str(e)}")
+
+    def backup_database(self):
+        """Создание резервной копии"""
+        if not self.db:
+            messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".backup",
+            filetypes=[("Backup files", "*.backup"), ("All files", "*.*")],
+            title="Сохранить резервную копию как"
+        )
+
+        if filename:
+            if self.db.backup_database(filename):
+                messagebox.showinfo("Успех", f"Резервная копия создана: {filename}")
+            else:
+                messagebox.showerror("Ошибка", "Не удалось создать резервную копию")
+
+    def restore_database(self):
+        """Восстановление из резервной копии"""
+        if messagebox.askyesno("Подтверждение",
+                               "Восстановление заменит текущую базу данных. Продолжить?"):
+            filename = filedialog.askopenfilename(
+                filetypes=[("Backup files", "*.backup"), ("All files", "*.*")],
+                title="Выберите резервную копию"
+            )
+
+            if filename:
+                if self.db and self.db.restore_database(filename):
+                    messagebox.showinfo("Успех", "База данных восстановлена")
+                    self.refresh_entries()
+                else:
+                    messagebox.showerror("Ошибка", "Не удалось восстановить базу данных")
 
     def add_entry(self):
         """Добавить запись"""
+        if not self.db:
+            messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Новая запись")
-        dialog.geometry("400x500")
+        dialog.geometry("500x600")
         dialog.transient(self.root)
         dialog.grab_set()
 
         # Форма
-        form = ttk.Frame(dialog)
-        form.pack(pady=20, padx=20, fill=tk.BOTH, expand=True)
+        form = ttk.Frame(dialog, padding="20")
+        form.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(form, text="Название:").pack(anchor=tk.W)
-        ttk.Entry(form).pack(fill=tk.X, pady=(0, 10))
+        # Поля ввода
+        ttk.Label(form, text="Название:*").pack(anchor=tk.W, pady=(10, 0))
+        title_entry = ttk.Entry(form)
+        title_entry.pack(fill=tk.X, pady=(0, 10))
+        title_entry.focus()
 
-        ttk.Label(form, text="Пользователь:").pack(anchor=tk.W)
-        ttk.Entry(form).pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(form, text="Пользователь:").pack(anchor=tk.W, pady=(10, 0))
+        username_entry = ttk.Entry(form)
+        username_entry.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(form, text="Пароль:").pack(anchor=tk.W)
+        ttk.Label(form, text="Пароль:").pack(anchor=tk.W, pady=(10, 0))
         from gui.widgets.password_entry import PasswordEntry
-        PasswordEntry(form).pack(fill=tk.X, pady=(0, 20))
+        password_entry = PasswordEntry(form)
+        password_entry.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Button(form, text="Сохранить",
-                   command=lambda: messagebox.showinfo("Успех", "Запись сохранена!")).pack()
+        ttk.Label(form, text="URL:").pack(anchor=tk.W, pady=(10, 0))
+        url_entry = ttk.Entry(form)
+        url_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(form, text="Заметки:").pack(anchor=tk.W, pady=(10, 0))
+        notes_text = tk.Text(form, height=4, width=50)
+        notes_text.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(form, text="Теги:").pack(anchor=tk.W, pady=(10, 0))
+        tags_entry = ttk.Entry(form)
+        tags_entry.pack(fill=tk.X, pady=(0, 10))
+
+        # Кнопки
+        btn_frame = ttk.Frame(form)
+        btn_frame.pack(fill=tk.X, pady=20)
+
+        def save_entry():
+            title = title_entry.get().strip()
+            if not title:
+                messagebox.showerror("Ошибка", "Название обязательно!")
+                return
+
+            try:
+                entry_id = self.db.add_entry(
+                    title=title,
+                    username=username_entry.get().strip(),
+                    password=password_entry.get(),
+                    url=url_entry.get().strip(),
+                    notes=notes_text.get('1.0', tk.END).strip(),
+                    tags=tags_entry.get().strip()
+                )
+                dialog.destroy()
+                self.refresh_entries()
+                messagebox.showinfo("Успех", f"Запись '{title}' сохранена!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось сохранить: {str(e)}")
+
+        ttk.Button(btn_frame, text="Сохранить", command=save_entry).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
 
     def edit_entry(self):
-        messagebox.showinfo("Правка", "Функция в разработке (Спринт 2)")
+        """Редактировать запись"""
+        if not self.db:
+            messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите запись для редактирования")
+            return
+
+        item = self.tree.item(selected[0])
+        entry_id = item['values'][0]
+
+        try:
+            entry = self.db.get_entry(entry_id)
+            if not entry:
+                messagebox.showerror("Ошибка", "Запись не найдена")
+                return
+
+            # Здесь будет диалог редактирования
+            messagebox.showinfo("Редактирование", f"Редактирование записи #{entry_id}\nФункция в разработке (Спринт 2)")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить запись: {str(e)}")
 
     def delete_entry(self):
-        messagebox.showinfo("Удаление", "Функция в разработке (Спринт 2)")
+        """Удалить запись"""
+        if not self.db:
+            messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Предупреждение", "Выберите запись для удаления")
+            return
+
+        item = self.tree.item(selected[0])
+        entry_id = item['values'][0]
+        title = item['values'][1]
+
+        if messagebox.askyesno("Подтверждение", f"Удалить запись '{title}'?"):
+            try:
+                # TODO: реализовать удаление в Sprint 2
+                messagebox.showinfo("Удаление", "Функция удаления в разработке (Спринт 2)")
+                # self.db.delete_entry(entry_id)
+                # self.refresh_entries()
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось удалить: {str(e)}")
 
     def show_audit_log(self):
-        messagebox.showinfo("Журнал аудита", "Спринт 5")
+        """Показать журнал аудита"""
+        messagebox.showinfo("Журнал аудита", "Функция будет реализована в Sprint 5")
 
     def show_settings(self):
-        messagebox.showinfo("Настройки", "Спринт 4")
+        """Показать настройки"""
+        messagebox.showinfo("Настройки", "Функция будет реализована в Sprint 4")
+
+    def show_about(self):
+        """О программе"""
+        about_text = """CryptoSafe Manager v1.0
+
+Безопасный менеджер паролей с открытым кодом
+
+Разработка по спринтам:
+• Sprint 1: Фундамент и архитектура ✓
+• Sprint 2: Управление ключами
+• Sprint 3: Настоящее шифрование (AES-256)
+• Sprint 4: Буфер обмена и UX
+• Sprint 5: Аудит и журналы
+• Sprint 6: Теги и организация
+• Sprint 7: Автоблокировка
+• Sprint 8: Упаковка и дистрибуция
+
+© 2025"""
+
+        messagebox.showinfo("О программе", about_text)
 
     def refresh_entries(self):
         """Обновить список записей"""
+        if not self.db:
+            return
+
+        # Очищаем таблицу
         for item in self.tree.get_children():
             self.tree.delete(item)
-        # TODO: Загрузить из БД
 
-    def run(self):
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.mainloop()
+        try:
+            # Загружаем записи
+            entries = self.db.get_all_entries()
+
+            for entry in entries:
+                values = (
+                    entry['id'],
+                    entry['title'],
+                    entry['username'] or '',
+                    entry['url'] or '',
+                    entry['updated_at'][:16] if entry['updated_at'] else ''
+                )
+                self.tree.insert('', tk.END, values=values)
+
+            # Применяем поиск
+            self._on_search()
+
+            self.status_var.set(f"Загружено {len(entries)} записей")
+            print(f"Загружено {len(entries)} записей")
+
+        except Exception as e:
+            print(f"Ошибка загрузки записей: {e}")
+            self.status_var.set("Ошибка загрузки записей")
 
     def on_closing(self):
+        """Обработка закрытия окна"""
         if self.db:
-            self.db.close()
+            try:
+                self.db.close()
+            except:
+                pass
         self.root.destroy()
+
+    def run(self):
+        """Запуск приложения"""
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.mainloop()
