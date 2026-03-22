@@ -1,9 +1,35 @@
 from abc import ABC, abstractmethod
+from typing import Protocol
+
+
+class EncryptionKeyProvider(Protocol):
+    def get_encryption_key(self) -> bytes:
+        ...
+
+
 class EncryptionService(ABC):
-    #Абстрактный сервис шифрования
     @abstractmethod
     def encrypt(self, data: bytes, key: bytes) -> bytes:
+        """Базовый низкоуровневый интерфейс: всё ещё принимает bytes."""
         pass
+
     @abstractmethod
     def decrypt(self, ciphertext: bytes, key: bytes) -> bytes:
         pass
+
+    # Удобные врапперы, работающие с KeyManager/KeyCache
+    def encrypt_with_provider(
+        self,
+        data: bytes,
+        provider: EncryptionKeyProvider
+    ) -> bytes:
+        key = provider.get_encryption_key()
+        return self.encrypt(data, key)
+
+    def decrypt_with_provider(
+        self,
+        ciphertext: bytes,
+        provider: EncryptionKeyProvider
+    ) -> bytes:
+        key = provider.get_encryption_key()
+        return self.decrypt(ciphertext, key)

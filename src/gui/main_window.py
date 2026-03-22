@@ -23,7 +23,9 @@ class MainWindow:
         self.events = EventSystem()
         self.db_path = None
         self.db = None
+        self.key_manager = None
         self.master_password = None
+        self.auth_service = None
 
         self.setup_ui()
         self.check_first_run()
@@ -162,12 +164,57 @@ class MainWindow:
                 else:
                     self.tree.detach(item)
 
+    def show_login_dialog(self):
+        """Диалог входа по мастер-паролю."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Вход")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Введите мастер-пароль:").pack(pady=10)
+
+        from gui.widgets.password_entry import PasswordEntry
+        pass_entry = PasswordEntry(dialog)
+        pass_entry.pack(fill=tk.X, padx=20, pady=(0, 10))
+        pass_entry.focus()
+
+        status_var = tk.StringVar(value="")
+
+        status_label = ttk.Label(dialog, textvariable=status_var, foreground="red")
+        status_label.pack(pady=(0, 10))
+
+        def do_login():
+            pwd = pass_entry.get()
+            if not pwd:
+                status_var.set("Введите пароль")
+                return
+            if not self.auth_service:
+                status_var.set("Служба аутентификации не инициализирована")
+                return
+            ok = self.auth_service.login(pwd)
+            pass_entry.clear()  # нужно добавить метод clear в PasswordEntry
+            if ok:
+                status_var.set("")
+                dialog.destroy()
+                self.refresh_entries()
+            else:
+                status_var.set("Неверный пароль")
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Войти", command=do_login).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        dialog.wait_window()
+
     def check_first_run(self):
-        """Проверка первого запуска"""
         if not self.config.db_path:
             self.show_setup_wizard()
         else:
             self.open_database()
+            if self.db:
+                self.show_login_dialog()
 
     def show_setup_wizard(self):
         """Мастер первоначальной настройки"""
@@ -244,8 +291,10 @@ class MainWindow:
             messagebox.showerror("Ошибка", "Пароли не совпадают!")
             return
 
-        if len(password) < 8:
-            messagebox.showerror("Ошибка", "Пароль должен быть не менее 8 символов!")
+        from core.crypto.password_policy import validate_password_strength
+        error = validate_password_strength(password)
+        if error:
+            messagebox.showerror("Ошибка", error)
             return
 
         db_path = self.db_path_entry.get().strip()
@@ -270,12 +319,16 @@ class MainWindow:
             # Создаем и инициализируем БД
             from database.db import DatabaseManager
             self.db = DatabaseManager(db_path)
-            self.db.set_master_password(password)
-            self.db.connect()  # Это создаст файл и таблицы
+            self.db.connect()
 
-            dialog.destroy()
-            self.refresh_entries()
-            messagebox.showinfo("Успех", "Настройка завершена!\nБаза данных создана.")
+            from core.key_manager import KeyManager
+            from core.crypto.authentication import AuthenticationService
+
+            self.key_manager = KeyManager(self.config, self.db.connection)
+            self.auth_service = AuthenticationService(self.key_manager, self.events)
+            self.db.key_manager = self.key_manager
+            # ИСПОЛЬЗУЕМ новый KeyManager для установки мастер-пароля
+            self.key_manager.setup_master_password(password)
 
         except Exception as e:
             print(f"Ошибка создания БД: {e}")
@@ -316,11 +369,18 @@ class MainWindow:
                 print(f"Путь скорректирован: {db_path}")
 
             self.db = DatabaseManager(db_path)
-
-            if self.master_password:
-                self.db.set_master_password(self.master_password)
-
             self.db.connect()
+
+            #if self.master_password:
+              #  self.db.set_master_password(self.master_password)
+
+            #self.db.connect()
+            from core.key_manager import KeyManager
+            from core.crypto.authentication import AuthenticationService
+
+            self.key_manager = KeyManager(self.config, self.db.connection)
+            self.auth_service = AuthenticationService(self.key_manager, self.events)
+            self.db.key_manager = self.key_manager
 
             self.status_var.set(f"База данных: {db_path}")
             self.refresh_entries()
