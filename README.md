@@ -4,7 +4,7 @@
 
 ## Roadmap (8 спринтов)
 
-### Sprint 1 ✅ Фундамент и архитектура
+### Sprint 1  Фундамент и архитектура
 - [x] Модульная структура (MVC)
 - [x] Менеджер конфигурации
 - [x] Схема базы данных SQLite
@@ -14,11 +14,11 @@
 - [x] Мастер первоначальной настройки
 - [x] Система событий
 
-### Sprint 2 ⏳ Управление ключами
-- [ ] PBKDF2/Argon2 для ключевой деривации
-- [ ] Хранилище ключей в БД
-- [ ] Проверка мастер-пароля
-- [ ] Смена мастер-пароля
+### Sprint 2 Управление ключами
+- [x] PBKDF2/Argon2 для ключевой деривации
+- [x] Хранилище ключей в БД
+- [x] Проверка мастер-пароля
+- [x] Смена мастер-пароля
 
 ### Sprint 3 Настоящее шифрование
 - [ ] AES-256-GCM с аутентификацией
@@ -62,34 +62,38 @@ venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 #Структура проекта
 cryptosafe-manager/
-├── src/                         
-│   ├── core/                      
-│   │   ├── crypto/                 
-│   │   │   ├── __init__.py
-│   │   │   ├── abstract.py         
-│   │   │   └── placeholder.py      # Заглушка AES
-│   │   ├── __init__.py
-│   │   ├── config.py               # Управление настройками
-│   │   ├── events.py               # Система событий
-│   │   └── key_manager.py          # Управление ключами
-│   ├── database/                   
-│   │   ├── __init__.py
-│   │   └── db.py                   # Менеджер БД
-│   ├── gui/                         
-│   │   ├── widgets/                  # Переиспользуемые компоненты
-│   │   │   ├── __init__.py
-│   │   │   └── password_entry.py     # Поле ввода пароля
-│   │   ├── __init__.py
-│   │   └── main_window.py            # Главное окно
-│   └── __init__.py
-├── tests/                         
+src/
+├── core/                             
 │   ├── __init__.py
-│   ├── conftest.py
-│   ├── test_database.py
-│   ├── test_crypto.py
-│   ├── test_events.py
-│   ├── test_config.py
-│   └── test_integration.py            
-├── main.py                        
-├── requirements.txt               # Зависимости
-└── README.md                      # Документация
+│   ├── config.py                    
+│   ├── events.py                    
+│   ├── key_manager.py               
+│   └── crypto/                      
+│       ├── __init__.py
+│       ├── abstract.py              
+│       ├── authentication.py        
+│       ├── key_derivation.py        
+│       ├── key_storage.py           
+│       ├── password_policy.py       
+│       └── placeholder.py           
+├── database/                        
+│   ├── __init__.py
+│   └── db.py                        
+├── gui/                             
+│   ├── __init__.py
+│   ├── main_window.py               
+│   └── widgets/
+│       └── password_entry.py
+└── main.py                           
+
+tests/                                 
+├── test_argon2_params.py             
+├── test_pbkdf2_consistency.py       
+├── test_key_cache.py                 
+└── ... (Sprint 1/3)
+
+docs/
+├── README.md                         
+└── sprint2/
+    └── architecture.md              
+                    # Документация
