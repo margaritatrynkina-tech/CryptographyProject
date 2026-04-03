@@ -5,10 +5,12 @@ import os
 import secrets
 from typing import Dict, Any
 
-
 class KeyDerivation:
     def __init__(self, config):
-        # config: твой ConfigManager или dict-подобный объект
+        time_cost = max(1, min(int(config.get('argon2_time', 3)), 10))
+        memory_cost = max(8192, min(int(config.get('argon2_memory', 65536)), 262144))
+        parallelism = max(1, min(int(config.get('argon2_parallelism', 4)), 8))
+        iterations = max(100000, min(int(config.get('pbkdf2_iterations', 100000)), 1000000))
         self.argon2_hasher = PasswordHasher(
             time_cost=config.get('argon2_time', 3),
             memory_cost=config.get('argon2_memory', 65536),  # 64 MiB в KiB
@@ -18,9 +20,6 @@ class KeyDerivation:
             type=Type.ID
         )
         self.pbkdf2_iterations = config.get('pbkdf2_iterations', 100000)
-
-    # Argon2: аутентификация
-
     def create_auth_hash(self, password: str) -> str:
         return self.argon2_hasher.hash(password)
 
@@ -31,9 +30,6 @@ class KeyDerivation:
             # «пустая» константная операция
             secrets.compare_digest(b'dummy', b'dummy')
             return False
-
-    # --- PBKDF2: ключ шифрования (KEY-1..2) ---
-
     @staticmethod
     def generate_enc_salt() -> bytes:
         return os.urandom(16)

@@ -1,7 +1,7 @@
 import pytest
 import base64
-from core.crypto.placeholder import AES256Placeholder
-from core.key_manager import KeyManager
+from src.core.crypto.placeholder import AES256Placeholder
+from src.core.key_manager import KeyManager
 class TestPlaceholderCrypto:
     def test_encrypt_decrypt(self):
         crypto = AES256Placeholder()

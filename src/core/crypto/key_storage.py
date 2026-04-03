@@ -5,22 +5,21 @@ import sqlite3
 
 
 class KeyCache:
-    #хранит только encryption key в памяти, пока сессия активна
     def __init__(self, inactivity_timeout: int = 3600):
-        self._key: Optional[bytes] = None
+        self._key: Optional[bytearray] = None
         self._lock = threading.RLock()
         self._last_activity = 0.0
-        self._timeout = inactivity_timeout  # 1 час по умолчанию
+        self._timeout = inactivity_timeout
 
     def set_key(self, key: bytes):
         with self._lock:
-            self._zero_key()  # на всякий случай очистить старый
-            self._key = bytearray(key)  # хранить как изменяемый буфер
+            self._zero_key()
+            self._key = bytearray(key)
             self._last_activity = time.time()
 
     def get_key(self) -> Optional[bytes]:
         with self._lock:
-            if not self._key:
+            if self._key is None:
                 return None
             if time.time() - self._last_activity > self._timeout:
                 self._zero_key()
@@ -38,8 +37,8 @@ class KeyCache:
         with self._lock:
             self._zero_key()
 
-class KeyStore:
 
+class KeyStore:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 

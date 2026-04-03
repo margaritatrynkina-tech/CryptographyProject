@@ -1,7 +1,7 @@
 import pytest
 import json
 import os
-from core.config import ConfigManager
+from src.core.config import ConfigManager
 class TestConfigManager:
     def test_set_get(self, config_manager):
         config_manager.set("test_key", "test_value")

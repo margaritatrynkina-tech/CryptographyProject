@@ -3,14 +3,13 @@ import threading
 import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from core.crypto.placeholder import AES256Placeholder
-from core.key_manager import KeyManager
+from src.core.crypto.placeholder import AES256Placeholder
+from src.core.key_manager import KeyManager
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.crypto = AES256Placeholder()
-        self.key_manager = None  # будет задан извне
+        self.key_manager = None
         self.db_path = Path(db_path)
-        # Создаем папку, если её нет
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
@@ -24,13 +23,13 @@ class DatabaseManager:
     def connect(self):
         with self._lock:
             if self._conn is None:
-                # Проверяем, что путь валидный
+                #путь валидный?
                 db_path_str = str(self.db_path)
                 print(f"Подключение к БД: {db_path_str}")
-                # Создаем соединение
+                # создаем соединение
                 self._conn = sqlite3.connect(db_path_str, check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
-                # Инициализируем схему
+                # инициализируем схему
                 self._init_schema()
                 print("Соединение с БД установлено")
     @property
@@ -53,16 +52,21 @@ class DatabaseManager:
 
         cursor.execute("PRAGMA user_version")
         version = cursor.fetchone()[0]
-
-        if version < 1:
-            # создать исходные таблицы Sprint 1 (то, что уже есть)
-            ...
-        if version < 2:
-            # изменить/пересоздать key_store под Sprint 2
-            # (в реале ALTER TABLE, здесь можно оставить комментарий-заглушку)
-            ...
-
-        # Таблица записей хранилища
+        print(f"Текущая версия схемы: {version}")
+        cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vault_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    username TEXT,
+                    encrypted_password BLOB,
+                    url TEXT,
+                    notes TEXT,
+                    tags TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        #таблица записей хранилища
         cursor.execute("""
             INSERT OR IGNORE INTO settings (setting_key, setting_value, encrypted)
             VALUES 
@@ -100,17 +104,18 @@ class DatabaseManager:
         """)
         # Хранилище ключей
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS key_store (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key_type TEXT NOT NULL,
-                key_data BLOB NOT NULL,
-                version INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
+               CREATE TABLE IF NOT EXISTS key_store (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   key_type TEXT NOT NULL,
+                   key_data BLOB NOT NULL,
+                   version INTEGER NOT NULL DEFAULT 1,
+                   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+               )
         """)
-        # Устанавливаем версию схемы (упрощённо)
-        cursor.execute("PRAGMA user_version = 2")
-        self._conn.commit()
+        if version < 2:
+            cursor.execute("PRAGMA user_version = 2")
+            print("Схема обновлена до версии 2")
+
         self._conn.commit()
         print("Схема БД инициализирована")
 

@@ -1,6 +1,3 @@
-"""
-Общие фикстуры для всех тестов
-"""
 import sys
 import os
 import pytest
@@ -9,9 +6,9 @@ import shutil
 from pathlib import Path
 #путь к src в sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-from database.db import DatabaseManager
-from core.config import ConfigManager
-from core.events import EventSystem
+from src.database.db import DatabaseManager
+from src.core.config import ConfigManager
+from src.core.events import EventSystem
 @pytest.fixture
 def temp_db_path():
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
@@ -48,14 +45,12 @@ def config_manager():
         shutil.rmtree(test_config_dir)
 @pytest.fixture
 def event_system():
-    """Создает систему событий для тестов"""
     es = EventSystem()
     es.start_async_processing()
     yield es
     es.stop_async_processing()
 @pytest.fixture
 def sample_entry_data():
-    """Образец данных для записи"""
     return {
         "title": "Test Account",
         "username": "testuser",

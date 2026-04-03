@@ -1,7 +1,6 @@
-
 import pytest
 import time
-from core.events import EventSystem, EventType
+from src.core.events import EventSystem, EventType
 class TestEventSystem:
     def test_sync_subscribe_emit(self, event_system):
         received = []

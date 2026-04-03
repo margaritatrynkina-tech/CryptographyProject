@@ -2,10 +2,8 @@ import time
 import secrets
 from dataclasses import dataclass
 from typing import Optional
-from ..events import EventSystem, EventType
-from ..key_manager import KeyManager
-
-
+from src.core.events import EventSystem, EventType
+from src.core.key_manager import KeyManager
 @dataclass
 class SessionInfo:
     logged_in: bool = False
@@ -43,7 +41,6 @@ class AuthenticationService:
             return True
         else:
             self.session.failed_attempts += 1
-            # защита от таймингов
             secrets.compare_digest(b'dummy', b'dummy')
             return False
 

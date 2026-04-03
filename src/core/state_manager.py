@@ -31,7 +31,7 @@ class StateManager:
         with self._lock:
             self._clipboard_content = content
             self.events.emit(EventType.CLIPBOARD_COPIED, {"timeout": timeout})
-            # Отмена предыдущего таймера
+            #отмена предыдущего таймера
             if self._clipboard_timer and self._clipboard_timer.is_alive():
                 self._clipboard_timer.cancel()
             # Установка нового таймера

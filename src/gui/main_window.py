@@ -7,9 +7,9 @@ import os
 # Добавляем путь к src для импортов
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from core.config import ConfigManager
-from core.events import EventSystem, EventType
-from database.db import DatabaseManager
+from src.core.config import ConfigManager
+from src.core.events import EventSystem, EventType
+from src.database.db import DatabaseManager
 
 
 class MainWindow:
@@ -20,6 +20,11 @@ class MainWindow:
         self.root.minsize(900, 600)
 
         self.config = ConfigManager()
+        if self.config.db_path:
+            self.db_path = self.config.db_path
+            print(f"Загружен путь к БД из конфига: {self.db_path}")
+        else:
+            print("Путь к БД не найден — нужен первый запуск")
         self.events = EventSystem()
         self.db_path = None
         self.db = None
@@ -121,6 +126,7 @@ class MainWindow:
         edit_menu.add_command(label="Удалить запись", command=self.delete_entry, accelerator="Del")
         edit_menu.add_separator()
         edit_menu.add_command(label="Журнал аудита", command=self.show_audit_log)
+        edit_menu.add_command(label="Сменить мастер-пароль", command=self.change_master_password)
 
         # Вид
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -163,51 +169,6 @@ class MainWindow:
                     self.tree.reattach(item, '', self.tree.index(item))
                 else:
                     self.tree.detach(item)
-
-    def show_login_dialog(self):
-        """Диалог входа по мастер-паролю."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Вход")
-        dialog.geometry("400x200")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        ttk.Label(dialog, text="Введите мастер-пароль:").pack(pady=10)
-
-        from gui.widgets.password_entry import PasswordEntry
-        pass_entry = PasswordEntry(dialog)
-        pass_entry.pack(fill=tk.X, padx=20, pady=(0, 10))
-        pass_entry.focus()
-
-        status_var = tk.StringVar(value="")
-
-        status_label = ttk.Label(dialog, textvariable=status_var, foreground="red")
-        status_label.pack(pady=(0, 10))
-
-        def do_login():
-            pwd = pass_entry.get()
-            if not pwd:
-                status_var.set("Введите пароль")
-                return
-            if not self.auth_service:
-                status_var.set("Служба аутентификации не инициализирована")
-                return
-            ok = self.auth_service.login(pwd)
-            pass_entry.clear()  # нужно добавить метод clear в PasswordEntry
-            if ok:
-                status_var.set("")
-                dialog.destroy()
-                self.refresh_entries()
-            else:
-                status_var.set("Неверный пароль")
-
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=10)
-        ttk.Button(btn_frame, text="Войти", command=do_login).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
-
-        dialog.wait_window()
-
     def check_first_run(self):
         if not self.config.db_path:
             self.show_setup_wizard()
@@ -239,7 +200,7 @@ class MainWindow:
         ttk.Label(tab1, text="Создайте мастер-пароль (невозможно восстановить!):",
                   font=('Arial', 10)).pack(pady=20)
 
-        from gui.widgets.password_entry import PasswordEntry
+        from src.gui.widgets.password_entry import PasswordEntry
 
         pass_frame = ttk.Frame(tab1)
         pass_frame.pack(pady=10, padx=20, fill=tk.X)
@@ -278,8 +239,46 @@ class MainWindow:
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="Создать", command=lambda: self._finish_setup(dialog)).pack(side=tk.RIGHT)
 
+    def show_login_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Вход")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Введите мастер-пароль:").pack(pady=10)
+
+        from src.gui.widgets.password_entry import PasswordEntry
+        pass_entry = PasswordEntry(dialog)
+        pass_entry.pack(fill=tk.X, padx=20, pady=(0, 10))
+        pass_entry.focus()
+
+        status_var = tk.StringVar(value="")
+        ttk.Label(dialog, textvariable=status_var, foreground="red").pack()
+
+        def do_login():
+            pwd = pass_entry.get()
+            if not pwd:
+                status_var.set("Введите пароль")
+                return
+            if not self.auth_service:
+                status_var.set("Ошибка аутентификации")
+                return
+            ok = self.auth_service.login(pwd)
+            pass_entry.clear()
+            if ok:
+                dialog.destroy()
+                self.refresh_entries()
+            else:
+                status_var.set("Неверный пароль")
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Войти", command=do_login).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        dialog.wait_window()
     def _finish_setup(self, dialog):
-        """Завершение настройки"""
         password = self.master_pass_entry.get()
         confirm_password = self.confirm_pass_entry.get()
 
@@ -291,7 +290,7 @@ class MainWindow:
             messagebox.showerror("Ошибка", "Пароли не совпадают!")
             return
 
-        from core.crypto.password_policy import validate_password_strength
+        from src.core.crypto.password_policy import validate_password_strength
         error = validate_password_strength(password)
         if error:
             messagebox.showerror("Ошибка", error)
@@ -317,17 +316,17 @@ class MainWindow:
             self.master_password = password
 
             # Создаем и инициализируем БД
-            from database.db import DatabaseManager
+            from src.database.db import DatabaseManager
             self.db = DatabaseManager(db_path)
             self.db.connect()
+            self.config.load_from_db(self.db.connection)
 
-            from core.key_manager import KeyManager
-            from core.crypto.authentication import AuthenticationService
+            from src.core.key_manager import KeyManager
+            from src.core.crypto.authentication import AuthenticationService
 
             self.key_manager = KeyManager(self.config, self.db.connection)
             self.auth_service = AuthenticationService(self.key_manager, self.events)
             self.db.key_manager = self.key_manager
-            # ИСПОЛЬЗУЕМ новый KeyManager для установки мастер-пароля
             self.key_manager.setup_master_password(password)
 
         except Exception as e:
@@ -335,6 +334,75 @@ class MainWindow:
             import traceback
             traceback.print_exc()
             messagebox.showerror("Ошибка", f"Не удалось создать базу: {str(e)}")
+
+    def change_master_password(self):
+        """Смена мастер-пароля с ротацией ключей (CHANGE-1..4)"""
+        if not self.db or not self.key_manager:
+            messagebox.showerror("Ошибка", "База данных не открыта или сессия заблокирована")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Смена мастер-пароля")
+        dialog.geometry("450x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        from src.gui.widgets.password_entry import PasswordEntry
+        from src.core.crypto.password_policy import validate_password_strength
+
+        # Форма
+        form = ttk.Frame(dialog, padding="20")
+        form.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(form, text="Текущий пароль:").pack(anchor=tk.W, pady=(0, 5))
+        old_entry = PasswordEntry(form)
+        old_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(form, text="Новый пароль:").pack(anchor=tk.W, pady=(0, 5))
+        new_entry = PasswordEntry(form)
+        new_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(form, text="Подтверждение:").pack(anchor=tk.W, pady=(0, 5))
+        confirm_entry = PasswordEntry(form)
+        confirm_entry.pack(fill=tk.X, pady=(0, 20))
+
+        def do_change():
+            old_pwd = old_entry.get()
+            new_pwd = new_entry.get()
+            confirm_pwd = confirm_entry.get()
+
+            if new_pwd != confirm_pwd:
+                messagebox.showerror("Ошибка", "Пароли не совпадают")
+                return
+
+            if validate_password_strength(new_pwd):
+                messagebox.showerror("Ошибка", validate_password_strength(new_pwd))
+                return
+
+            try:
+                self.key_manager.rotate_master_password(old_pwd, new_pwd, self.db)
+                messagebox.showinfo("Успех", "✅ Мастер-пароль успешно изменён!")
+                dialog.destroy()
+                old_entry.clear()
+                new_entry.clear()
+                confirm_entry.clear()
+            except ValueError as e:
+                messagebox.showerror("Ошибка", str(e))
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Ошибка ротации ключей: {str(e)}")
+
+        btn_frame = ttk.Frame(form)
+        btn_frame.pack(fill=tk.X, pady=10)
+        ttk.Button(btn_frame, text="Сменить", command=do_change).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        new_entry.focus()
+        dialog.wait_window()
+
+    def load_config_from_db(self):
+        """Загрузить настройки из БД"""
+        if self.db and self.db.connection:
+            self.config.load_from_db(self.db.connection)
 
     def browse_db_path(self, entry):
         """Выбор файла БД"""
@@ -357,7 +425,7 @@ class MainWindow:
             return
 
         try:
-            from database.db import DatabaseManager
+            from src.database.db import DatabaseManager
 
             db_path = self.config.db_path
             print(f"Попытка открыть БД: {db_path}")
@@ -370,13 +438,9 @@ class MainWindow:
 
             self.db = DatabaseManager(db_path)
             self.db.connect()
-
-            #if self.master_password:
-              #  self.db.set_master_password(self.master_password)
-
-            #self.db.connect()
-            from core.key_manager import KeyManager
-            from core.crypto.authentication import AuthenticationService
+            self.config.load_from_db(self.db.connection)
+            from src.core.key_manager import KeyManager
+            from src.core.crypto.authentication import AuthenticationService
 
             self.key_manager = KeyManager(self.config, self.db.connection)
             self.auth_service = AuthenticationService(self.key_manager, self.events)
@@ -453,7 +517,7 @@ class MainWindow:
         username_entry.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(form, text="Пароль:").pack(anchor=tk.W, pady=(10, 0))
-        from gui.widgets.password_entry import PasswordEntry
+        from src.gui.widgets.password_entry import PasswordEntry
         password_entry = PasswordEntry(form)
         password_entry.pack(fill=tk.X, pady=(0, 10))
 
@@ -553,7 +617,7 @@ class MainWindow:
 
     def show_settings(self):
         """Показать настройки"""
-        messagebox.showinfo("Настройки", "Функция будет реализована в Sprint 4")
+        messag4ebox.showinfo("Настройки", "Функция будет реализована в Sprint 4")
 
     def show_about(self):
         """О программе"""
@@ -562,7 +626,7 @@ class MainWindow:
 Безопасный менеджер паролей с открытым кодом
 
 Разработка по спринтам:
-• Sprint 1: Фундамент и архитектура ✓
+• Sprint 1: Фундамент и архитектура
 • Sprint 2: Управление ключами
 • Sprint 3: Настоящее шифрование (AES-256)
 • Sprint 4: Буфер обмена и UX
@@ -570,8 +634,7 @@ class MainWindow:
 • Sprint 6: Теги и организация
 • Sprint 7: Автоблокировка
 • Sprint 8: Упаковка и дистрибуция
-
-© 2025"""
+"""
 
         messagebox.showinfo("О программе", about_text)
 
@@ -610,12 +673,15 @@ class MainWindow:
 
     def on_closing(self):
         """Обработка закрытия окна"""
+        if self.auth_service:
+            self.auth_service.logout()  # ← ОЧИСТКА КЛЮЧЕЙ!
         if self.db:
             try:
                 self.db.close()
             except:
                 pass
         self.root.destroy()
+
 
     def run(self):
         """Запуск приложения"""

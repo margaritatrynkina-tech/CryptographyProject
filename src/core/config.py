@@ -9,6 +9,17 @@ class ConfigManager:
         self.config_file = self.config_dir / "config.json"
         self._data: Dict[str, Any] = {}
         self.load()
+
+    def load_from_db(self, db_connection):
+        try:
+            cursor = db_connection.cursor()
+            cursor.execute("SELECT setting_key, setting_value FROM settings")
+            for row in cursor.fetchall():
+                key, value = row
+                self._data[key] = value
+            print(f"Загружено {len(self._data)} настроек из БД")
+        except Exception as e:
+            print(f"Ошибка загрузки настроек из БД: {e}")
     def load(self):
         if self.config_file.exists():
             try:

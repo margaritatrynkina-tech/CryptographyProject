@@ -1,9 +1,9 @@
 import pytest
 import os
 import tempfile
-from database.db import DatabaseManager
-from core.events import EventSystem, EventType
-from core.config import ConfigManager
+from src.database.db import DatabaseManager
+from src.core.events import EventSystem, EventType
+from src.core.config import ConfigManager
 
 
 class TestDatabaseWithEvents:
