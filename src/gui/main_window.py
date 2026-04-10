@@ -18,7 +18,7 @@ class MainWindow:
         self.root.title("CryptoSafe Manager v1.0")
         self.root.geometry("1200x800")
         self.root.minsize(900, 600)
-
+        self.entry_manager = None
         self.config = ConfigManager()
         if self.config.db_path:
             self.db_path = self.config.db_path
@@ -322,6 +322,8 @@ class MainWindow:
             self.config.load_from_db(self.db.connection)
 
             from src.core.key_manager import KeyManager
+            from src.core.vault.entry_manager import EntryManager
+            self.entry_manager = EntryManager(self.db.connection, self.key_manager, self.events)
             from src.core.crypto.authentication import AuthenticationService
 
             self.key_manager = KeyManager(self.config, self.db.connection)
@@ -520,7 +522,14 @@ class MainWindow:
         from src.gui.widgets.password_entry import PasswordEntry
         password_entry = PasswordEntry(form)
         password_entry.pack(fill=tk.X, pady=(0, 10))
+        gen_btn = ttk.Button(form, text="🔑 Генерировать",
+                             command=lambda: password_entry.insert(0, self.generate_password()))
+        gen_btn.pack(pady=(0, 5))
 
+        def generate_password(self):
+            from src.core.vault.password_generator import PasswordGenerator
+            gen = PasswordGenerator()
+            return gen.generate(length=16)
         ttk.Label(form, text="URL:").pack(anchor=tk.W, pady=(10, 0))
         url_entry = ttk.Entry(form)
         url_entry.pack(fill=tk.X, pady=(0, 10))
@@ -538,26 +547,20 @@ class MainWindow:
         btn_frame.pack(fill=tk.X, pady=20)
 
         def save_entry():
-            title = title_entry.get().strip()
-            if not title:
-                messagebox.showerror("Ошибка", "Название обязательно!")
-                return
-
+            data = {
+                'title': title_entry.get(),
+                'username': username_entry.get(),
+                'password': password_entry.get(),
+                'url': url_entry.get(),
+                'notes': notes_text.get('1.0', tk.END).strip(),
+                'tags': tags_entry.get()
+            }
             try:
-                entry_id = self.db.add_entry(
-                    title=title,
-                    username=username_entry.get().strip(),
-                    password=password_entry.get(),
-                    url=url_entry.get().strip(),
-                    notes=notes_text.get('1.0', tk.END).strip(),
-                    tags=tags_entry.get().strip()
-                )
+                entry_id = self.entry_manager.create_entry(data)  # 🆕
                 dialog.destroy()
                 self.refresh_entries()
-                messagebox.showinfo("Успех", f"Запись '{title}' сохранена!")
             except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось сохранить: {str(e)}")
-
+                messagebox.showerror("Ошибка", str(e))
         ttk.Button(btn_frame, text="Сохранить", command=save_entry).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
 
@@ -639,38 +642,28 @@ class MainWindow:
         messagebox.showinfo("О программе", about_text)
 
     def refresh_entries(self):
-        """Обновить список записей"""
-        if not self.db:
+        if not self.entry_manager:
             return
+
+        entries = self.entry_manager.get_all_entries()  # 🆕
 
         # Очищаем таблицу
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        try:
-            # Загружаем записи
-            entries = self.db.get_all_entries()
+        for entry in entries:
+            # Маск username (GUI-1)
+            username = entry.get('username', '')
+            masked = username[:4] + '••••' if len(username) > 4 else '••••'
 
-            for entry in entries:
-                values = (
-                    entry['id'],
-                    entry['title'],
-                    entry['username'] or '',
-                    entry['url'] or '',
-                    entry['updated_at'][:16] if entry['updated_at'] else ''
-                )
-                self.tree.insert('', tk.END, values=values)
-
-            # Применяем поиск
-            self._on_search()
-
-            self.status_var.set(f"Загружено {len(entries)} записей")
-            print(f"Загружено {len(entries)} записей")
-
-        except Exception as e:
-            print(f"Ошибка загрузки записей: {e}")
-            self.status_var.set("Ошибка загрузки записей")
-
+            values = (
+                entry['id'][:8],  # Короткий ID
+                entry['title'],
+                masked,
+                entry.get('url', '')[:30] + '...' if len(entry.get('url', '')) > 30 else entry.get('url', ''),
+                entry.get('updated_at', '')[:16]
+            )
+            self.tree.insert('', tk.END, values=values)
     def on_closing(self):
         """Обработка закрытия окна"""
         if self.auth_service:

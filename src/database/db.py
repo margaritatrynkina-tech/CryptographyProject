@@ -53,19 +53,25 @@ class DatabaseManager:
         cursor.execute("PRAGMA user_version")
         version = cursor.fetchone()[0]
         print(f"Текущая версия схемы: {version}")
+        if version < 3:
+            # Миграция vault_entries
+            cursor.execute("""
+                ALTER TABLE vault_entries ADD COLUMN encrypted_data BLOB;
+                ALTER TABLE vault_entries ADD COLUMN tags TEXT DEFAULT '';
+            """)
+            cursor.execute("PRAGMA user_version = 3")
         cursor.execute("""
                 CREATE TABLE IF NOT EXISTS vault_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    username TEXT,
-                    encrypted_password BLOB,
-                    url TEXT,
-                    notes TEXT,
-                    tags TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    id TEXT PRIMARY KEY,              -- UUID
+                    encrypted_data BLOB NOT NULL,     -- nonce+ciphertext+tag
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    tags TEXT DEFAULT ''
                 )
             """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_updated ON vault_entries(updated_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_tags ON vault_entries(tags)")
+
         #таблица записей хранилища
         cursor.execute("""
             INSERT OR IGNORE INTO settings (setting_key, setting_value, encrypted)
@@ -139,22 +145,15 @@ class DatabaseManager:
             return "[Сессия заблокирована]"
         return self.crypto.decrypt(encrypted_data, key).decode()
 
-    def add_entry(self, title: str, username: str = "", password: str = "",
-                  url: str = "", notes: str = "", tags: str = "") -> int:
-        if not self._conn:
-            self.connect()
-        with self._lock:
-            encrypted_password = self.encrypt_field(password) if password else None
-            cursor = self._conn.cursor()
-            cursor.execute("""
-                INSERT INTO vault_entries 
-                (title, username, encrypted_password, url, notes, tags)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (title, username, encrypted_password, url, notes, tags))
-            entry_id = cursor.lastrowid
-            self._conn.commit()
-            print(f"Запись добавлена: ID={entry_id}, title={title}")
-            return entry_id
+    def add_encrypted_entry(self, entry_id: str, encrypted_data: bytes, tags: str = "") -> int:
+        """DATA-1"""
+        cursor = self._conn.cursor()
+        cursor.execute("""
+            INSERT INTO vault_entries (id, encrypted_data, created_at, updated_at, tags)
+            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+        """, (entry_id, encrypted_data, tags))
+        self._conn.commit()
+        return cursor.lastrowid
     def get_all_entries(self) -> List[Dict[str, Any]]:
         if not self._conn:
             self.connect()
