@@ -49,33 +49,41 @@ class DatabaseManager:
         if not self._conn:
             raise Exception("Нет соединения с БД")
         cursor = self._conn.cursor()
-
         cursor.execute("PRAGMA user_version")
         version = cursor.fetchone()[0]
         print(f"Текущая версия схемы: {version}")
-        if version < 3:
-            # Миграция vault_entries
-            cursor.execute("""
-                ALTER TABLE vault_entries ADD COLUMN encrypted_data BLOB;
-                ALTER TABLE vault_entries ADD COLUMN tags TEXT DEFAULT '';
-            """)
-            cursor.execute("PRAGMA user_version = 3")
         cursor.execute("""
-                CREATE TABLE IF NOT EXISTS vault_entries (
-                    id TEXT PRIMARY KEY,              -- UUID
-                    encrypted_data BLOB NOT NULL,     -- nonce+ciphertext+tag
-                    created_at DATETIME NOT NULL,
-                    updated_at DATETIME NOT NULL,
-                    tags TEXT DEFAULT ''
-                )
-            """)
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT UNIQUE NOT NULL,
+                setting_value TEXT,
+                encrypted BOOLEAN DEFAULT 0
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS key_store (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_type TEXT NOT NULL,
+                key_data BLOB NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vault_entries (
+                id TEXT PRIMARY KEY,
+                encrypted_data BLOB NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                tags TEXT DEFAULT ''
+            )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_updated ON vault_entries(updated_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_tags ON vault_entries(tags)")
-
-        #таблица записей хранилища
-        cursor.execute("""
+        cursor.executemany("""
             INSERT OR IGNORE INTO settings (setting_key, setting_value, encrypted)
-            VALUES 
+            VALUES (?, ?, ?)
+        """, [
             ('password_min_length', '12', 0),
             ('password_require_upper', '1', 0),
             ('password_require_lower', '1', 0),
@@ -86,42 +94,8 @@ class DatabaseManager:
             ('argon2_parallelism', '4', 0),
             ('pbkdf2_iterations', '100000', 0),
             ('auto_lock_timeout', '3600', 0)
-        """)
-
-        # Журнал аудита
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS audit_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                action TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                entry_id INTEGER,
-                details TEXT,
-                signature BLOB
-            )
-        """)
-        # Настройки
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                setting_key TEXT UNIQUE NOT NULL,
-                setting_value TEXT,
-                encrypted BOOLEAN DEFAULT 0
-            )
-        """)
-        # Хранилище ключей
-        cursor.execute("""
-               CREATE TABLE IF NOT EXISTS key_store (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   key_type TEXT NOT NULL,
-                   key_data BLOB NOT NULL,
-                   version INTEGER NOT NULL DEFAULT 1,
-                   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-               )
-        """)
-        if version < 2:
-            cursor.execute("PRAGMA user_version = 2")
-            print("Схема обновлена до версии 2")
-
+        ])
+        cursor.execute("PRAGMA user_version = 3")
         self._conn.commit()
         print("Схема БД инициализирована")
 
@@ -146,7 +120,6 @@ class DatabaseManager:
         return self.crypto.decrypt(encrypted_data, key).decode()
 
     def add_encrypted_entry(self, entry_id: str, encrypted_data: bytes, tags: str = "") -> int:
-        """DATA-1"""
         cursor = self._conn.cursor()
         cursor.execute("""
             INSERT INTO vault_entries (id, encrypted_data, created_at, updated_at, tags)
