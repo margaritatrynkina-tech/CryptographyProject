@@ -5,6 +5,9 @@ tkinter  # встроенный
 # Security (будут использоваться в следующих спринтах)
 cryptography>=41.0.0  # для AES-GCM в Sprint 3
 argon2-cffi>=21.3.0   # для Argon2 в Sprint 2
+pyperclip>=1.9.0      # fallback clipboard + Linux backend
+pywin32>=306; platform_system == "Windows"  # win32clipboard adapter
+pyobjc>=10.3; platform_system == "Darwin"   # NSPasteboard adapter
 
 # Testing
 pytest>=7.4.0

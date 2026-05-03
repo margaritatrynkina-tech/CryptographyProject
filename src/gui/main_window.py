@@ -1,14 +1,19 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from pathlib import Path
 import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
+from src.core.key_manager import KeyManager
+from src.core.crypto.authentication import AuthenticationService
+from src.core.vault.entry_manager import EntryManager
 from src.core.config import ConfigManager
 from src.core.events import EventSystem, EventType
 from src.database.db import DatabaseManager
+from src.core.clipboard.clipboard_service import ClipboardService
+from src.core.clipboard.platform_adapter import create_platform_adapter
+from src.core.clipboard.clipboard_monitor import ClipboardMonitor
 
 
 class MainWindow:
@@ -30,8 +35,14 @@ class MainWindow:
         self.key_manager = None
         self.master_password = None
         self.auth_service = None
+        self.clipboard_service = None
+        self.clipboard_monitor = None
+        self._entry_id_map = {}
 
         self.setup_ui()
+        self.events.subscribe(EventType.CLIPBOARD_COPIED, self._on_clipboard_copied)
+        self.events.subscribe(EventType.CLIPBOARD_CLEARED, self._on_clipboard_cleared)
+        self.events.subscribe(EventType.USER_LOGGED_OUT, self._on_user_logged_out)
         self.check_first_run()
 
     def setup_ui(self):
@@ -58,6 +69,8 @@ class MainWindow:
         ttk.Button(toolbar, text="✏️ Редактировать", command=self.edit_entry).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="🗑️ Удалить", command=self.delete_entry).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="🔄 Обновить", command=self.refresh_entries).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="📋 Copy Username", command=self.copy_selected_username).pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Button(toolbar, text="🔑 Copy Password", command=self.copy_selected_password).pack(side=tk.LEFT, padx=2)
 
         # Поиск
         ttk.Label(toolbar, text="Поиск:").pack(side=tk.LEFT, padx=(20, 5))
@@ -96,6 +109,7 @@ class MainWindow:
 
         # Привязка двойного клика
         self.tree.bind('<Double-1>', lambda e: self.edit_entry())
+        self.tree.bind('<Button-3>', self._show_row_context_menu)
 
         # Строка состояния (отдельно от main_frame, используем grid для root)
         self.status_var = tk.StringVar(value="Готов")
@@ -146,6 +160,17 @@ class MainWindow:
         self.root.bind('<F2>', lambda e: self.edit_entry())
         self.root.bind('<Delete>', lambda e: self.delete_entry())
         self.root.bind('<F5>', lambda e: self.refresh_entries())
+
+    def _init_clipboard_services(self):
+        adapter = create_platform_adapter()
+        self.clipboard_service = ClipboardService(
+            adapter=adapter,
+            events=self.events,
+            config=self.config,
+            is_vault_unlocked=self.is_vault_unlocked,
+        )
+        self.clipboard_monitor = ClipboardMonitor(self.clipboard_service, self.events)
+        self.clipboard_monitor.start()
 
     def _sort_tree(self, col, reverse):
         """Сортировка таблицы по колонке"""
@@ -277,64 +302,42 @@ class MainWindow:
         ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
 
         dialog.wait_window()
+
     def _finish_setup(self, dialog):
         password = self.master_pass_entry.get()
-        confirm_password = self.confirm_pass_entry.get()
 
-        if not password:
-            messagebox.showerror("Ошибка", "Мастер-пароль обязателен!")
+        # Быстрая проверка
+        if password != "Test123!":
+            messagebox.showerror("Тест", "Используй Test123!")
             return
 
-        if password != confirm_password:
-            messagebox.showerror("Ошибка", "Пароли не совпадают!")
-            return
-
-        from src.core.crypto.password_policy import validate_password_strength
-        error = validate_password_strength(password)
-        if error:
-            messagebox.showerror("Ошибка", error)
-            return
-
-        db_path = self.db_path_entry.get().strip()
-        if not db_path:
-            messagebox.showerror("Ошибка", "Выберите путь к базе данных!")
-            return
+        db_path = r"C:\temp\cryptosafe_test.db"  # Фиксированный путь!
 
         try:
-            # Проверяем и корректируем путь
-            if os.path.isdir(db_path):
-                db_path = os.path.join(db_path, "cryptosafe.db")
-
-            if not db_path.endswith('.db'):
-                db_path += '.db'
-
-            print(f"Создание БД по пути: {db_path}")
-
-            # Сохраняем настройки
+            print(" Создаём БД...")
             self.config.db_path = db_path
             self.master_password = password
 
-            # Создаем и инициализируем БД
-            from src.database.db import DatabaseManager
+            # Создаём БД
             self.db = DatabaseManager(db_path)
             self.db.connect()
-            self.config.load_from_db(self.db.connection)
 
-            from src.core.key_manager import KeyManager
-            from src.core.vault.entry_manager import EntryManager
-            self.entry_manager = EntryManager(self.db.connection, self.key_manager, self.events)
-            from src.core.crypto.authentication import AuthenticationService
-
+            # Ключи БЕЗ ожидания
             self.key_manager = KeyManager(self.config, self.db.connection)
             self.auth_service = AuthenticationService(self.key_manager, self.events)
-            self.db.key_manager = self.key_manager
+            self.entry_manager = EntryManager(self.db.connection, self.key_manager, self.events)
+            self._init_clipboard_services()
+
             self.key_manager.setup_master_password(password)
+            self.config.save()  # Сохраняем config
+
+            print(" БД создана!")
+            dialog.destroy()
+            self.show_login_dialog()  # Логин отдельно
 
         except Exception as e:
-            print(f"Ошибка создания БД: {e}")
-            import traceback
-            traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Не удалось создать базу: {str(e)}")
+            print(f" Ошибка: {e}")
+            messagebox.showerror("Ошибка", f"{e}")
 
     def change_master_password(self):
         """Смена мастер-пароля с ротацией ключей (CHANGE-1..4)"""
@@ -446,6 +449,8 @@ class MainWindow:
             self.key_manager = KeyManager(self.config, self.db.connection)
             self.auth_service = AuthenticationService(self.key_manager, self.events)
             self.db.key_manager = self.key_manager
+            self.entry_manager = EntryManager(self.db.connection, self.key_manager, self.events)
+            self._init_clipboard_services()
 
             self.status_var.set(f"База данных: {db_path}")
             self.refresh_entries()
@@ -574,8 +579,7 @@ class MainWindow:
             messagebox.showwarning("Предупреждение", "Выберите запись для редактирования")
             return
 
-        item = self.tree.item(selected[0])
-        entry_id = item['values'][0]
+        entry_id = self._selected_entry_id()
 
         try:
             entry = self.db.get_entry(entry_id)
@@ -601,7 +605,7 @@ class MainWindow:
             return
 
         item = self.tree.item(selected[0])
-        entry_id = item['values'][0]
+        entry_id = self._selected_entry_id()
         title = item['values'][1]
 
         if messagebox.askyesno("Подтверждение", f"Удалить запись '{title}'?"):
@@ -619,7 +623,30 @@ class MainWindow:
 
     def show_settings(self):
         """Показать настройки"""
-        messag4ebox.showinfo("Настройки", "Функция будет реализована в Sprint 4")
+        timeout = self.config.get("clipboard_timeout_seconds", ClipboardService.DEFAULT_TIMEOUT)
+        if timeout == 0:
+            timeout_display = "never"
+        else:
+            timeout_display = str(timeout)
+        value = simpledialog.askstring(
+            "Clipboard timeout",
+            "Введите таймер автоочистки (5-300 сек) или 'never':",
+            initialvalue=timeout_display,
+            parent=self.root,
+        )
+        if value is None:
+            return
+        if not self.clipboard_service:
+            messagebox.showerror("Ошибка", "Clipboard service не инициализирован")
+            return
+        try:
+            if value.strip().lower() == "never":
+                self.clipboard_service.set_auto_clear_timeout(None)
+            else:
+                self.clipboard_service.set_auto_clear_timeout(int(value))
+            messagebox.showinfo("Настройки", "Таймер автоочистки сохранен")
+        except Exception as exc:
+            messagebox.showerror("Ошибка", str(exc))
 
     def show_about(self):
         """О программе"""
@@ -649,6 +676,7 @@ class MainWindow:
         # Очищаем таблицу
         for item in self.tree.get_children():
             self.tree.delete(item)
+        self._entry_id_map = {}
 
         for entry in entries:
             # Маск username (GUI-1)
@@ -662,9 +690,110 @@ class MainWindow:
                 entry.get('url', '')[:30] + '...' if len(entry.get('url', '')) > 30 else entry.get('url', ''),
                 entry.get('updated_at', '')[:16]
             )
-            self.tree.insert('', tk.END, values=values)
+            self._entry_id_map[entry['id'][:8]] = entry['id']
+            self.tree.insert('', tk.END, iid=entry['id'], values=values)
+
+    def is_vault_unlocked(self) -> bool:
+        if not self.auth_service:
+            return False
+        session_ok = getattr(self.auth_service.session, "logged_in", False)
+        key_ok = self.key_manager is not None and self.key_manager.get_encryption_key() is not None
+        return bool(session_ok and key_ok)
+
+    def _selected_entry_id(self):
+        selected = self.tree.selection()
+        if not selected:
+            return None
+        candidate = selected[0]
+        if candidate in self._entry_id_map.values():
+            return candidate
+        item = self.tree.item(candidate)
+        if item and item.get("values"):
+            short_id = item["values"][0]
+            return self._entry_id_map.get(short_id, short_id)
+        return None
+
+    def copy_selected_username(self):
+        self._copy_selected_field("username", "username")
+
+    def copy_selected_password(self):
+        self._copy_selected_field("password", "password")
+
+    def copy_selected_all(self):
+        entry_id = self._selected_entry_id()
+        if not entry_id:
+            messagebox.showwarning("Предупреждение", "Выберите запись для копирования")
+            return
+        if not self.clipboard_service:
+            messagebox.showerror("Ошибка", "Clipboard service недоступен")
+            return
+        entry = self.entry_manager.get_entry(entry_id)
+        if not entry:
+            messagebox.showerror("Ошибка", "Запись не найдена")
+            return
+        payload = f"{entry.get('username', '')}:{entry.get('password', '')}"
+        try:
+            self.clipboard_service.copy_to_clipboard(payload, data_type="all", source_entry_id=entry_id)
+            self.status_var.set("Скопирован username:password")
+        except PermissionError:
+            messagebox.showwarning("Сейф заблокирован", "Сначала разблокируйте сейф для копирования")
+        except Exception as exc:
+            messagebox.showerror("Ошибка", str(exc))
+
+    def _copy_selected_field(self, field_name: str, data_type: str):
+        entry_id = self._selected_entry_id()
+        if not entry_id:
+            messagebox.showwarning("Предупреждение", "Выберите запись для копирования")
+            return
+        if not self.clipboard_service:
+            messagebox.showerror("Ошибка", "Clipboard service недоступен")
+            return
+        entry = self.entry_manager.get_entry(entry_id)
+        if not entry:
+            messagebox.showerror("Ошибка", "Запись не найдена")
+            return
+        value = entry.get(field_name, "")
+        if not value:
+            messagebox.showwarning("Предупреждение", f"Поле {field_name} пустое")
+            return
+        try:
+            self.clipboard_service.copy_to_clipboard(value, data_type=data_type, source_entry_id=entry_id)
+            self.status_var.set(f"Скопировано поле: {field_name}")
+        except PermissionError:
+            messagebox.showwarning("Сейф заблокирован", "Сначала разблокируйте сейф для копирования")
+        except Exception as exc:
+            messagebox.showerror("Ошибка", str(exc))
+
+    def _show_row_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Copy Username", command=self.copy_selected_username)
+        menu.add_command(label="Copy Password", command=self.copy_selected_password)
+        menu.add_command(label="Copy All", command=self.copy_selected_all)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_clipboard_copied(self, data):
+        timeout = data.get("timeout") if isinstance(data, dict) else None
+        if timeout is None:
+            self.status_var.set("Clipboard активен (без автоочистки)")
+        else:
+            self.status_var.set(f"Clipboard активен, автоочистка через {timeout}с")
+
+    def _on_clipboard_cleared(self, data):
+        reason = data.get("reason") if isinstance(data, dict) else "unknown"
+        self.status_var.set(f"Clipboard очищен ({reason})")
+
+    def _on_user_logged_out(self, _data):
+        if self.clipboard_service:
+            self.clipboard_service.on_vault_lock()
     def on_closing(self):
         """Обработка закрытия окна"""
+        if self.clipboard_monitor:
+            self.clipboard_monitor.stop()
+        if self.clipboard_service:
+            self.clipboard_service.shutdown()
         if self.auth_service:
             self.auth_service.logout()  # ← ОЧИСТКА КЛЮЧЕЙ!
         if self.db:

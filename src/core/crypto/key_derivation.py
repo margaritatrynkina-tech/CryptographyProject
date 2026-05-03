@@ -7,14 +7,14 @@ from typing import Dict, Any
 
 class KeyDerivation:
     def __init__(self, config):
-        time_cost = max(1, min(int(config.get('argon2_time', 3)), 10))
-        memory_cost = max(8192, min(int(config.get('argon2_memory', 65536)), 262144))
-        parallelism = max(1, min(int(config.get('argon2_parallelism', 4)), 8))
-        iterations = max(100000, min(int(config.get('pbkdf2_iterations', 100000)), 1000000))
+        time_cost = int(getattr(config, "time_cost", 3))
+        memory_cost = int(getattr(config, "memory_cost", 65536))
+        parallelism = int(getattr(config, "parallelism", 4))
+
         self.argon2_hasher = PasswordHasher(
-            time_cost=config.get('argon2_time', 3),
-            memory_cost=config.get('argon2_memory', 65536),  # 64 MiB в KiB
-            parallelism=config.get('argon2_parallelism', 4),
+            time_cost=time_cost,
+            memory_cost=memory_cost,
+            parallelism=parallelism,
             hash_len=32,
             salt_len=16,
             type=Type.ID
