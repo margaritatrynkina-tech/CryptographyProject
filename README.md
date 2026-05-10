@@ -25,7 +25,7 @@
 - [ ] Интеграция с cryptography
 - [ ] Верификация целостности
 
-### Sprint 4 — Буфер обмена и безопасность ✅
+### Sprint 4 — Буфер обмена и безопасность 
 - [x] Модуль `src/core/clipboard/` (3 файла)
 - [x] `ClipboardService` — основная логика с автоочисткой
 - [x] `PlatformAdapter` — работа с буфером на Windows/macOS/Linux
@@ -114,5 +114,14 @@ tests/
 requirements.txt                      # Добавлены: pyperclip, pywin32, pyobjc, argon2-cffi
 
 
+python -m pytest tests/ -v
+сприт 2
+python -m pytest tests/test_argon2_params.py tests/test_pbkdf2_consistency.py tests/test_timing_resistance.py tests/test_key_cache.py -v
 
+
+спринт 3
+python -m pytest tests/test_vault_encryption.py tests/test_config.py tests/test_events.py -v
+
+
+спринт 4
 pytest tests/test_clipboard_service.py -v

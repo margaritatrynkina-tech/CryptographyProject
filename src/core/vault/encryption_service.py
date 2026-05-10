@@ -26,11 +26,15 @@ class AESGCMEncryptionService(EncryptionService):
             raise ValueError("Data integrity check failed") from e
     def encrypt_entry(self, entry_data: Dict[str, Any], key_provider: EncryptionKeyProvider) -> bytes:
         key = key_provider.get_encryption_key()
+        if key is None:
+            raise ValueError("Ключ шифрования недоступен: сначала войдите по мастер-паролю")
         payload = dict(entry_data)
         payload.setdefault("version", 1)
         plaintext = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         return self.encrypt(plaintext, key)
     def decrypt_entry(self, encrypted_blob: bytes, key_provider: EncryptionKeyProvider) -> Dict[str, Any]:
         key = key_provider.get_encryption_key()
+        if key is None:
+            raise ValueError("Ключ шифрования недоступен: сначала войдите по мастер-паролю")
         plaintext = self.decrypt(encrypted_blob, key)
         return json.loads(plaintext.decode("utf-8"))

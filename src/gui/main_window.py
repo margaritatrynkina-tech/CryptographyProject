@@ -38,6 +38,7 @@ class MainWindow:
         self.clipboard_service = None
         self.clipboard_monitor = None
         self._entry_id_map = {}
+        self._display_order_ids = []
 
         self.setup_ui()
         self.events.subscribe(EventType.CLIPBOARD_COPIED, self._on_clipboard_copied)
@@ -184,22 +185,38 @@ class MainWindow:
 
     def _on_search(self):
         """Фильтрация записей по поиску"""
-        search_text = self.search_var.get().lower()
-        for item in self.tree.get_children():
-            values = self.tree.item(item)['values']
-            if len(values) >= 3:
-                if (search_text in str(values[1]).lower() or  # title
-                        search_text in str(values[2]).lower()):  # username
-                    self.tree.reattach(item, '', self.tree.index(item))
-                else:
-                    self.tree.detach(item)
+        query = (self.search_var.get() or "").strip().lower()
+        row_ids = list(self._display_order_ids) or list(self._entry_id_map.values())
+        if not query:
+            for iid in row_ids:
+                if not self.tree.exists(iid):
+                    continue
+                try:
+                    self.tree.reattach(iid, "", tk.END)
+                except tk.TclError as e:
+                    print(f"[debug] _on_search reattach {iid!r}: {e}")
+            return
+        for iid in row_ids:
+            if not self.tree.exists(iid):
+                continue
+            vals = self.tree.item(iid).get("values") or ()
+            title = str(vals[1]).lower() if len(vals) > 1 else ""
+            user_m = str(vals[2]).lower() if len(vals) > 2 else ""
+            if query in title or query in user_m:
+                try:
+                    self.tree.reattach(iid, "", tk.END)
+                except tk.TclError as e:
+                    print(f"[debug] _on_search reattach(match) {iid!r}: {e}")
+            else:
+                try:
+                    self.tree.detach(iid)
+                except tk.TclError as e:
+                    print(f"[debug] _on_search detach {iid!r}: {e}")
     def check_first_run(self):
         if not self.config.db_path:
             self.show_setup_wizard()
         else:
             self.open_database()
-            if self.db:
-                self.show_login_dialog()
 
     def show_setup_wizard(self):
         """Мастер первоначальной настройки"""
@@ -305,13 +322,20 @@ class MainWindow:
 
     def _finish_setup(self, dialog):
         password = self.master_pass_entry.get()
-
-        # Быстрая проверка
-        if password != "Test123!":
-            messagebox.showerror("Тест", "Используй Test123!")
+        if not password:
+            messagebox.showerror("Ошибка", "Введите мастер-пароль")
             return
 
-        db_path = r"C:\temp\cryptosafe_test.db"  # Фиксированный путь!
+        db_path = self.db_path_entry.get()
+        if not db_path:
+            messagebox.showerror("Ошибка", "Укажите путь к базе данных")
+            return
+        from src.core.crypto.password_policy import validate_password_strength
+        error = validate_password_strength(password)
+        if error:
+            if not messagebox.askyesno("Слабый пароль",
+                                       f"{error}\n\nПродолжить с этим паролем?"):
+                return
 
         try:
             print(" Создаём БД...")
@@ -453,8 +477,8 @@ class MainWindow:
             self._init_clipboard_services()
 
             self.status_var.set(f"База данных: {db_path}")
-            self.refresh_entries()
-            print("База данных успешно открыта")
+            print("База данных успешно открыта — требуется вход")
+            self.show_login_dialog()
 
         except Exception as e:
             print(f"Ошибка открытия БД: {e}")
@@ -496,10 +520,26 @@ class MainWindow:
                 else:
                     messagebox.showerror("Ошибка", "Не удалось восстановить базу данных")
 
+    def _require_encryption_key(self, context: str) -> bool:
+        if not self.key_manager:
+            print(f"[debug] {context}: key_manager отсутствует")
+            messagebox.showerror("Ошибка", "Менеджер ключей недоступен")
+            return False
+        if self.key_manager.get_encryption_key() is None:
+            print(f"[debug] {context}: ключ шифрования не загружен")
+            messagebox.showwarning(
+                "Сейф заблокирован",
+                "Войдите по мастер-паролю (Файл → при открытии БД или после запуска), чтобы работать с записями.",
+            )
+            return False
+        return True
+
     def add_entry(self):
         """Добавить запись"""
         if not self.db:
             messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+        if not self.entry_manager or not self._require_encryption_key("add_entry"):
             return
 
         dialog = tk.Toplevel(self.root)
@@ -526,14 +566,15 @@ class MainWindow:
         from src.gui.widgets.password_entry import PasswordEntry
         password_entry = PasswordEntry(form)
         password_entry.pack(fill=tk.X, pady=(0, 10))
-        gen_btn = ttk.Button(form, text="🔑 Генерировать",
-                             command=lambda: password_entry.insert(0, self.generate_password()))
+        from src.core.vault.password_generator import PasswordGenerator
+
+        def generate_and_set():
+            gen = PasswordGenerator()
+            password_entry.set(gen.generate(length=16))
+
+        gen_btn = ttk.Button(form, text="🔑 Генерировать", command=generate_and_set)
         gen_btn.pack(pady=(0, 5))
 
-        def generate_password(self):
-            from src.core.vault.password_generator import PasswordGenerator
-            gen = PasswordGenerator()
-            return gen.generate(length=16)
         ttk.Label(form, text="URL:").pack(anchor=tk.W, pady=(10, 0))
         url_entry = ttk.Entry(form)
         url_entry.pack(fill=tk.X, pady=(0, 10))
@@ -573,6 +614,8 @@ class MainWindow:
         if not self.db:
             messagebox.showerror("Ошибка", "База данных не открыта")
             return
+        if not self.entry_manager or not self._require_encryption_key("edit_entry"):
+            return
 
         selected = self.tree.selection()
         if not selected:
@@ -580,23 +623,101 @@ class MainWindow:
             return
 
         entry_id = self._selected_entry_id()
+        if not entry_id:
+            messagebox.showerror("Ошибка", "Не удалось определить запись")
+            return
 
         try:
-            entry = self.db.get_entry(entry_id)
+            entry = self.entry_manager.get_entry(entry_id)
             if not entry:
                 messagebox.showerror("Ошибка", "Запись не найдена")
                 return
-
-            # Здесь будет диалог редактирования
-            messagebox.showinfo("Редактирование", f"Редактирование записи #{entry_id}\nФункция в разработке (Спринт 2)")
-
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось загрузить запись: {str(e)}")
+            print(f"[debug] edit_entry load: {e}")
+            messagebox.showerror("Ошибка", f"Не удалось загрузить запись: {e}")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Редактировать запись")
+        dialog.geometry("500x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        form = ttk.Frame(dialog, padding="20")
+        form.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(form, text="Название:*").pack(anchor=tk.W, pady=(10, 0))
+        title_entry = ttk.Entry(form)
+        title_entry.pack(fill=tk.X, pady=(0, 10))
+        title_entry.insert(0, entry.get("title") or "")
+
+        ttk.Label(form, text="Пользователь:").pack(anchor=tk.W, pady=(10, 0))
+        username_entry = ttk.Entry(form)
+        username_entry.pack(fill=tk.X, pady=(0, 10))
+        username_entry.insert(0, entry.get("username") or "")
+
+        ttk.Label(form, text="Пароль:").pack(anchor=tk.W, pady=(10, 0))
+        from src.gui.widgets.password_entry import PasswordEntry
+        from src.core.vault.password_generator import PasswordGenerator
+
+        password_entry = PasswordEntry(form)
+        password_entry.pack(fill=tk.X, pady=(0, 10))
+        password_entry.set(entry.get("password") or "")
+
+        def generate_and_set():
+            gen = PasswordGenerator()
+            password_entry.set(gen.generate(length=16))
+
+        ttk.Button(form, text="🔑 Генерировать", command=generate_and_set).pack(pady=(0, 5))
+
+        ttk.Label(form, text="URL:").pack(anchor=tk.W, pady=(10, 0))
+        url_entry = ttk.Entry(form)
+        url_entry.pack(fill=tk.X, pady=(0, 10))
+        url_entry.insert(0, entry.get("url") or "")
+
+        ttk.Label(form, text="Заметки:").pack(anchor=tk.W, pady=(10, 0))
+        notes_text = tk.Text(form, height=4, width=50)
+        notes_text.pack(fill=tk.X, pady=(0, 10))
+        notes_text.insert("1.0", entry.get("notes") or "")
+
+        ttk.Label(form, text="Теги:").pack(anchor=tk.W, pady=(10, 0))
+        tags_entry = ttk.Entry(form)
+        tags_entry.pack(fill=tk.X, pady=(0, 10))
+        tags_entry.insert(0, entry.get("tags") or "")
+
+        btn_frame = ttk.Frame(form)
+        btn_frame.pack(fill=tk.X, pady=20)
+        title_entry.focus()
+
+        def save_entry():
+            data = {
+                "title": title_entry.get(),
+                "username": username_entry.get(),
+                "password": password_entry.get(),
+                "url": url_entry.get(),
+                "notes": notes_text.get("1.0", tk.END).strip(),
+                "tags": tags_entry.get(),
+            }
+            try:
+                ok = self.entry_manager.update_entry(entry_id, data)
+                if not ok:
+                    messagebox.showerror("Ошибка", "Запись не найдена при сохранении")
+                    return
+                dialog.destroy()
+                self.refresh_entries()
+            except Exception as e:
+                print(f"[debug] edit_entry save: {e}")
+                messagebox.showerror("Ошибка", str(e))
+
+        ttk.Button(btn_frame, text="Сохранить", command=save_entry).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Отмена", command=dialog.destroy).pack(side=tk.RIGHT)
 
     def delete_entry(self):
         """Удалить запись"""
         if not self.db:
             messagebox.showerror("Ошибка", "База данных не открыта")
+            return
+        if not self.entry_manager or not self._require_encryption_key("delete_entry"):
             return
 
         selected = self.tree.selection()
@@ -606,16 +727,22 @@ class MainWindow:
 
         item = self.tree.item(selected[0])
         entry_id = self._selected_entry_id()
-        title = item['values'][1]
+        if not entry_id:
+            messagebox.showerror("Ошибка", "Не удалось определить запись")
+            return
+        vals = item.get("values") or ()
+        title = str(vals[1]) if len(vals) > 1 else entry_id
 
-        if messagebox.askyesno("Подтверждение", f"Удалить запись '{title}'?"):
+        if messagebox.askyesno("Подтверждение", f"Удалить запись «{title}»?"):
             try:
-                # TODO: реализовать удаление в Sprint 2
-                messagebox.showinfo("Удаление", "Функция удаления в разработке (Спринт 2)")
-                # self.db.delete_entry(entry_id)
-                # self.refresh_entries()
+                if not self.entry_manager.delete_entry(entry_id, soft_delete=False):
+                    messagebox.showerror("Ошибка", "Запись не найдена")
+                    return
+                self.refresh_entries()
+                self.status_var.set("Запись удалена")
             except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось удалить: {str(e)}")
+                print(f"[debug] delete_entry: {e}")
+                messagebox.showerror("Ошибка", f"Не удалось удалить: {e}")
 
     def show_audit_log(self):
         """Показать журнал аудита"""
@@ -669,29 +796,60 @@ class MainWindow:
 
     def refresh_entries(self):
         if not self.entry_manager:
+            print("[debug] refresh_entries: entry_manager отсутствует")
+            return
+        if not self.key_manager or self.key_manager.get_encryption_key() is None:
+            print("[debug] refresh_entries: ключ шифрования недоступен — очистка таблицы")
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            self._entry_id_map.clear()
+            self._display_order_ids.clear()
             return
 
-        entries = self.entry_manager.get_all_entries()  # 🆕
+        try:
+            entries = self.entry_manager.get_all_entries()
+        except ValueError as e:
+            print(f"[debug] refresh_entries: {e}")
+            messagebox.showerror("Ошибка", str(e))
+            return
+        except Exception as e:
+            print(f"[debug] refresh_entries: неожиданная ошибка: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Ошибка", f"Не удалось загрузить записи: {e}")
+            return
 
-        # Очищаем таблицу
         for item in self.tree.get_children():
             self.tree.delete(item)
-        self._entry_id_map = {}
+        self._entry_id_map.clear()
+        self._display_order_ids.clear()
 
         for entry in entries:
-            # Маск username (GUI-1)
-            username = entry.get('username', '')
-            masked = username[:4] + '••••' if len(username) > 4 else '••••'
+            username = entry.get("username") or ""
+            if len(username) > 4:
+                masked = username[:4] + "••••"
+            else:
+                masked = "••••"
+            url_raw = entry.get("url") or ""
+            url_display = (url_raw[:30] + "...") if len(url_raw) > 30 else url_raw
+            upd = entry.get("updated_at") or ""
+            upd_display = str(upd)[:16] if upd else ""
 
+            eid = entry["id"]
+            short = eid[:8]
             values = (
-                entry['id'][:8],  # Короткий ID
-                entry['title'],
+                short,
+                entry.get("title") or "",
                 masked,
-                entry.get('url', '')[:30] + '...' if len(entry.get('url', '')) > 30 else entry.get('url', ''),
-                entry.get('updated_at', '')[:16]
+                url_display,
+                upd_display,
             )
-            self._entry_id_map[entry['id'][:8]] = entry['id']
-            self.tree.insert('', tk.END, iid=entry['id'], values=values)
+            self.tree.insert("", tk.END, iid=eid, values=values)
+            self._entry_id_map[short] = eid
+            self._display_order_ids.append(eid)
+
+        if (self.search_var.get() or "").strip():
+            self._on_search()
 
     def is_vault_unlocked(self) -> bool:
         if not self.auth_service:
@@ -788,6 +946,7 @@ class MainWindow:
     def _on_user_logged_out(self, _data):
         if self.clipboard_service:
             self.clipboard_service.on_vault_lock()
+        self.refresh_entries()
     def on_closing(self):
         """Обработка закрытия окна"""
         if self.clipboard_monitor:

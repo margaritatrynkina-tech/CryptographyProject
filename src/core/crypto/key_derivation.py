@@ -7,19 +7,19 @@ from typing import Dict, Any
 
 class KeyDerivation:
     def __init__(self, config):
-        time_cost = int(getattr(config, "time_cost", 3))
-        memory_cost = int(getattr(config, "memory_cost", 65536))
-        parallelism = int(getattr(config, "parallelism", 4))
-
+        time_cost = config.get('argon2_time', 3)
+        memory_cost = config.get('argon2_memory', 65536)
+        parallelism = config.get('argon2_parallelism', 4)
         self.argon2_hasher = PasswordHasher(
-            time_cost=time_cost,
-            memory_cost=memory_cost,
-            parallelism=parallelism,
+            time_cost=int(time_cost) if time_cost else 3,
+            memory_cost=int(memory_cost) if memory_cost else 65536,
+            parallelism=int(parallelism) if parallelism else 4,
             hash_len=32,
             salt_len=16,
             type=Type.ID
         )
-        self.pbkdf2_iterations = config.get('pbkdf2_iterations', 100000)
+        raw_iterations = config.get('pbkdf2_iterations', 100000)
+        self.pbkdf2_iterations = int(raw_iterations) if raw_iterations else 100000
     def create_auth_hash(self, password: str) -> str:
         return self.argon2_hasher.hash(password)
 

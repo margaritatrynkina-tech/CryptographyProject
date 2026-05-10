@@ -7,7 +7,7 @@ class KeyManager:
     def __init__(self, config, db_connection):
         self.derivation = KeyDerivation(config)
         self.cache = KeyCache(
-            inactivity_timeout=config.get('key_cache_timeout', 3600)
+            inactivity_timeout=int(config.get('key_cache_timeout', 3600))
         )
         self.store = KeyStore(db_connection)
 
