@@ -37,10 +37,15 @@ class AuthenticationService:
             self.session.login_timestamp = now
             self.session.last_activity = now
             self.session.failed_attempts = 0
+            self.key_manager.get_audit_signing_seed(password)
             self.events.emit(EventType.USER_LOGGED_IN, {})
             return True
         else:
             self.session.failed_attempts += 1
+            self.events.emit(
+                EventType.AUDIT_LOG_ENTRY,
+                {"reason": "auth_failed", "attempts": self.session.failed_attempts},
+            )
             secrets.compare_digest(b'dummy', b'dummy')
             return False
 

@@ -1,4 +1,4 @@
-from typing import Dict, Callable, List, Any, Union
+from typing import Dict, Callable, List, Any, Union, Optional
 from enum import Enum
 import threading
 from queue import Queue

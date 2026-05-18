@@ -7,6 +7,8 @@ import sqlite3
 class KeyCache:
     def __init__(self, inactivity_timeout: int = 3600):
         self._key: Optional[bytearray] = None
+        self._audit_seed: Optional[bytearray] = None
+        self._audit_enc_key: Optional[bytearray] = None
         self._lock = threading.RLock()
         self._last_activity = 0.0
         self._timeout = inactivity_timeout
@@ -33,9 +35,44 @@ class KeyCache:
                 self._key[i] = 0
         self._key = None
 
+    def set_audit_seed(self, seed: bytes) -> None:
+        with self._lock:
+            self._zero_audit_seed()
+            self._audit_seed = bytearray(seed)
+
+    def get_audit_seed(self) -> Optional[bytes]:
+        with self._lock:
+            if self._audit_seed is None:
+                return None
+            return bytes(self._audit_seed)
+
+    def _zero_audit_seed(self) -> None:
+        if isinstance(self._audit_seed, bytearray):
+            for i in range(len(self._audit_seed)):
+                self._audit_seed[i] = 0
+        self._audit_seed = None
+
+    def set_audit_enc_key(self, key: bytes) -> None:
+        with self._lock:
+            if isinstance(self._audit_enc_key, bytearray):
+                for i in range(len(self._audit_enc_key)):
+                    self._audit_enc_key[i] = 0
+            self._audit_enc_key = bytearray(key)
+
+    def get_audit_enc_key(self) -> Optional[bytes]:
+        with self._lock:
+            if self._audit_enc_key is None:
+                return None
+            return bytes(self._audit_enc_key)
+
     def clear(self):
         with self._lock:
             self._zero_key()
+            self._zero_audit_seed()
+            if isinstance(self._audit_enc_key, bytearray):
+                for i in range(len(self._audit_enc_key)):
+                    self._audit_enc_key[i] = 0
+            self._audit_enc_key = None
 
 
 class KeyStore:

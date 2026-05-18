@@ -20,13 +20,16 @@ class DummyAdapter:
 
 class DummyConfig:
     def __init__(self):
-        self.values = {"clipboard_timeout_seconds": 5}
+        self.values = {"clipboard_timeout_seconds": 5, "clipboard_notifications": False}
 
     def get(self, key, default=None):
         return self.values.get(key, default)
 
     def set(self, key, value):
         self.values[key] = value
+
+    def get_bool(self, key, default=False):
+        return False
 
 
 def test_clipboard_requires_unlocked_vault():

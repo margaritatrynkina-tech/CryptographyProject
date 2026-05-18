@@ -35,6 +35,34 @@ class KeyManager:
 
     def get_encryption_key(self) -> Optional[bytes]:
         return self.cache.get_key()
+
+    def get_audit_signing_seed(self, password: Optional[str] = None) -> Optional[bytes]:
+        cached = self.cache.get_audit_seed()
+        if cached:
+            return cached
+        if password is None:
+            return None
+        salt = self.store.get_latest_enc_salt()
+        if not salt:
+            return None
+        seed = self.derivation.derive_audit_signing_key(password, salt)
+        self.cache.set_audit_seed(seed)
+        enc_key = self.derivation.derive_audit_encryption_key(password, salt)
+        self.cache.set_audit_enc_key(enc_key)
+        return seed
+
+    def get_audit_encryption_key(self, password: Optional[str] = None) -> Optional[bytes]:
+        cached = self.cache.get_audit_enc_key()
+        if cached:
+            return cached
+        if password is None:
+            return None
+        salt = self.store.get_latest_enc_salt()
+        if not salt:
+            return None
+        key = self.derivation.derive_audit_encryption_key(password, salt)
+        self.cache.set_audit_enc_key(key)
+        return key
     def rotate_master_password(self, old_password: str, new_password: str, db):
         #проверить старый пароль
         if not self.authenticate(old_password):

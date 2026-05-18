@@ -80,6 +80,38 @@ class DatabaseManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_updated ON vault_entries(updated_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vault_tags ON vault_entries(tags)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                sequence_number INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'anonymous',
+                source TEXT NOT NULL,
+                entry_id TEXT,
+                previous_hash TEXT NOT NULL,
+                entry_data TEXT NOT NULL,
+                entry_hash TEXT NOT NULL,
+                signature TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS audit_signing_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_key_hex TEXT NOT NULL UNIQUE,
+                algorithm TEXT NOT NULL DEFAULT 'Ed25519',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_log(event_type)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_sequence ON audit_log(sequence_number)"
+        )
         cursor.executemany("""
             INSERT OR IGNORE INTO settings (setting_key, setting_value, encrypted)
             VALUES (?, ?, ?)
@@ -93,9 +125,12 @@ class DatabaseManager:
             ('argon2_memory', '65536', 0),
             ('argon2_parallelism', '4', 0),
             ('pbkdf2_iterations', '100000', 0),
-            ('auto_lock_timeout', '3600', 0)
+            ('auto_lock_timeout', '3600', 0),
+            ('clipboard_timeout_seconds', '30', 0),
+            ('audit_max_entries', '10000', 0),
+            ('audit_max_age_days', '365', 0),
         ])
-        cursor.execute("PRAGMA user_version = 3")
+        cursor.execute("PRAGMA user_version = 4")
         self._conn.commit()
         print("Схема БД инициализирована")
 

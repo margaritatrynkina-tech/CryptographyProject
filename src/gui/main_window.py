@@ -14,6 +14,15 @@ from src.database.db import DatabaseManager
 from src.core.clipboard.clipboard_service import ClipboardService
 from src.core.clipboard.platform_adapter import create_platform_adapter
 from src.core.clipboard.clipboard_monitor import ClipboardMonitor
+from src.core.audit.audit_logger import AuditLogger
+from src.core.audit.log_signer import AuditLogSigner
+from src.core.audit.log_formatters import export_logs
+from src.gui.widgets.audit_viewer import AuditViewerWindow
+from src.gui.widgets.toast import ToastManager
+from src.gui.widgets.clipboard_preview import ClipboardPreviewPanel
+from src.core.settings.encrypted_settings import EncryptedSettingsStore
+from src.core.settings.settings_adapter import SettingsAdapter
+from src.core.settings.clipboard_presets import CLIPBOARD_PRESETS, apply_preset
 
 
 class MainWindow:
@@ -37,6 +46,12 @@ class MainWindow:
         self.auth_service = None
         self.clipboard_service = None
         self.clipboard_monitor = None
+        self.audit_logger = None
+        self._audit_viewer = None
+        self.settings_adapter = SettingsAdapter(self.config, None)
+        self.toast = ToastManager(self.root)
+        self._clipboard_tick_id = None
+        self._export_schedule_timer = None
         self._entry_id_map = {}
         self._display_order_ids = []
 
@@ -55,11 +70,12 @@ class MainWindow:
         self.root.grid_columnconfigure(0, weight=1)
 
         # Основной фрейм
-        main_frame = ttk.Frame(self.root)
-        main_frame.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
+        main_frame = self.main_frame
 
         # Настройка сетки для main_frame
-        main_frame.grid_rowconfigure(1, weight=1)  # строка с таблицей растягивается
+        main_frame.grid_rowconfigure(2, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)  # колонка с таблицей растягивается
 
         # Панель инструментов (grid row=0)
@@ -80,23 +96,30 @@ class MainWindow:
         search_entry = ttk.Entry(toolbar, textvariable=self.search_var, width=30)
         search_entry.pack(side=tk.LEFT)
 
-        # Таблица записей (grid row=1)
-        columns = ('id', 'title', 'username', 'url', 'updated_at')
-        self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=20, selectmode='browse')
+        # Clipboard preview (UI-4)
+        self.clipboard_preview = None
 
-        # Настройка заголовков
+        # Таблица записей (grid row=2)
+        columns = ('id', 'title', 'username', 'url', 'updated_at', 'copy_user', 'copy_pass', 'copy_totp')
+        self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=18, selectmode='browse')
+
         self.tree.heading('id', text='ID', command=lambda: self._sort_tree('id', False))
         self.tree.heading('title', text='Название', command=lambda: self._sort_tree('title', False))
         self.tree.heading('username', text='Пользователь', command=lambda: self._sort_tree('username', False))
         self.tree.heading('url', text='URL', command=lambda: self._sort_tree('url', False))
         self.tree.heading('updated_at', text='Обновлено', command=lambda: self._sort_tree('updated_at', False))
+        self.tree.heading('copy_user', text='👤')
+        self.tree.heading('copy_pass', text='🔑')
+        self.tree.heading('copy_totp', text='⏱')
 
-        # Настройка ширины колонок
         self.tree.column('id', width=50, anchor='center')
-        self.tree.column('title', width=200)
-        self.tree.column('username', width=150)
-        self.tree.column('url', width=200)
-        self.tree.column('updated_at', width=150, anchor='center')
+        self.tree.column('title', width=180)
+        self.tree.column('username', width=120)
+        self.tree.column('url', width=160)
+        self.tree.column('updated_at', width=120, anchor='center')
+        self.tree.column('copy_user', width=36, anchor='center')
+        self.tree.column('copy_pass', width=36, anchor='center')
+        self.tree.column('copy_totp', width=36, anchor='center')
 
         # Скроллбары
         v_scroll = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -104,13 +127,13 @@ class MainWindow:
         self.tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
 
         # Размещение таблицы и скроллбаров в grid
-        self.tree.grid(row=1, column=0, sticky='nsew')
-        v_scroll.grid(row=1, column=1, sticky='ns')
-        h_scroll.grid(row=2, column=0, sticky='ew')
+        self.tree.grid(row=2, column=0, sticky='nsew')
+        v_scroll.grid(row=2, column=1, sticky='ns')
+        h_scroll.grid(row=3, column=0, sticky='ew')
 
-        # Привязка двойного клика
         self.tree.bind('<Double-1>', lambda e: self.edit_entry())
         self.tree.bind('<Button-3>', self._show_row_context_menu)
+        self.tree.bind('<Button-1>', self._on_tree_click)
 
         # Строка состояния (отдельно от main_frame, используем grid для root)
         self.status_var = tk.StringVar(value="Готов")
@@ -162,16 +185,116 @@ class MainWindow:
         self.root.bind('<Delete>', lambda e: self.delete_entry())
         self.root.bind('<F5>', lambda e: self.refresh_entries())
 
+    def _init_settings_adapter(self) -> None:
+        if self.db and self.key_manager:
+            enc = EncryptedSettingsStore(self.db.connection, self.key_manager)
+            self.settings_adapter = SettingsAdapter(self.config, enc)
+            if self.settings_adapter.get("clipboard_timeout_seconds") is None:
+                apply_preset(self.settings_adapter, "standard")
+
     def _init_clipboard_services(self):
+        self._init_settings_adapter()
         adapter = create_platform_adapter()
         self.clipboard_service = ClipboardService(
             adapter=adapter,
             events=self.events,
-            config=self.config,
+            config=self.settings_adapter,
             is_vault_unlocked=self.is_vault_unlocked,
+            on_notify=self._clipboard_toast,
+            on_suspicious_activity=self._on_suspicious_clipboard,
         )
-        self.clipboard_monitor = ClipboardMonitor(self.clipboard_service, self.events)
+        self.clipboard_monitor = ClipboardMonitor(
+            self.clipboard_service, self.events, on_suspicious=self._on_monitor_alert
+        )
         self.clipboard_monitor.start()
+        self._ensure_clipboard_preview()
+        self._start_clipboard_status_tick()
+
+    def _ensure_clipboard_preview(self):
+        if self.clipboard_preview is None and self.clipboard_service and hasattr(self, "main_frame"):
+            self.clipboard_preview = ClipboardPreviewPanel(
+                self.main_frame,
+                self.clipboard_service,
+                self._verify_master_password,
+            )
+            self.clipboard_preview.grid(row=1, column=0, sticky='ew', pady=(0, 6))
+
+    def _clipboard_toast(self, level: str, message: str) -> None:
+        self.root.after(0, lambda: self.toast.show(message, level))
+
+    def _on_suspicious_clipboard(self, payload: dict) -> None:
+        def ask():
+            block = messagebox.askyesno(
+                "Подозрительная активность",
+                f"{payload.get('reason', 'detected')}\n\n"
+                "Заблокировать дальнейшее копирование в буфер?",
+                parent=self.root,
+            )
+            if block:
+                self.clipboard_service.set_copy_blocked(True)
+        self.root.after(0, ask)
+
+    def _on_monitor_alert(self, reason: str, details: dict) -> None:
+        self._clipboard_toast("warning", f"Clipboard monitor: {reason}")
+
+    def _verify_master_password(self, password: str) -> bool:
+        if not self.auth_service:
+            return False
+        return self.auth_service.key_manager.derivation.verify_password(
+            password, self.auth_service.key_manager.store.get_latest_auth_hash() or ""
+        )
+
+    def _start_clipboard_status_tick(self) -> None:
+        if self._clipboard_tick_id:
+            self.root.after_cancel(self._clipboard_tick_id)
+        self._update_clipboard_status()
+        self._clipboard_tick_id = self.root.after(1000, self._start_clipboard_status_tick)
+
+    def _update_clipboard_status(self) -> None:
+        if not self.clipboard_service:
+            return
+        st = self.clipboard_service.get_status()
+        if self.clipboard_preview:
+            self.clipboard_preview.refresh()
+        if not st.get("active"):
+            return
+        dtype = st.get("data_type", "text")
+        rem = st.get("remaining_seconds")
+        if rem is None:
+            self.status_var.set(f"Clipboard: {dtype} (no auto-clear)")
+        else:
+            sec = int(rem)
+            self.status_var.set(f"Clipboard: {dtype} ({sec}s remaining)")
+
+    def _init_audit_logger(self, master_password: str) -> None:
+        if not self.db or not self.key_manager:
+            return
+        seed = self.key_manager.get_audit_signing_seed(master_password)
+        enc_key = self.key_manager.get_audit_encryption_key(master_password)
+        if not seed:
+            return
+        signer = AuditLogSigner(signing_seed=seed)
+        self.audit_logger = AuditLogger(
+            self.db.connection,
+            signer,
+            events=self.events,
+            audit_encryption_key=enc_key,
+            on_periodic_verify=self._on_periodic_audit_verify,
+            verify_interval_hours=24.0,
+        )
+        self.audit_logger.log_event(
+            "SYSTEM_STARTUP",
+            "INFO",
+            "main_window",
+            {"action": "session_started"},
+        )
+
+    def _on_periodic_audit_verify(self, result: dict) -> None:
+        if not result.get("verified"):
+            self.root.after(
+                0,
+                lambda: self.toast.show("Audit log integrity check FAILED", "error"),
+            )
 
     def _sort_tree(self, col, reverse):
         """Сортировка таблицы по колонке"""
@@ -308,6 +431,7 @@ class MainWindow:
             ok = self.auth_service.login(pwd)
             pass_entry.clear()
             if ok:
+                self._init_audit_logger(pwd)
                 dialog.destroy()
                 self.refresh_entries()
             else:
@@ -746,34 +870,100 @@ class MainWindow:
 
     def show_audit_log(self):
         """Показать журнал аудита"""
-        messagebox.showinfo("Журнал аудита", "Функция будет реализована в Sprint 5")
+        if not self.is_vault_unlocked():
+            messagebox.showwarning("Журнал аудита", "Сейф должен быть разблокирован")
+            return
+        if not self.audit_logger:
+            messagebox.showerror("Журнал аудита", "Аудит не инициализирован — войдите в сейф")
+            return
+        self._audit_viewer = AuditViewerWindow(
+            self.root,
+            self.audit_logger,
+            verify_callback=lambda: self.audit_logger.verify_integrity(limit=1000),
+            export_callback=self._export_audit_logs,
+            on_entry_click=self._highlight_vault_entry,
+            schedule_export_callback=self._schedule_audit_export,
+        )
+
+    def _export_audit_logs(
+        self, fmt: str, path: str, _password: str, date_from=None, date_to=None
+    ) -> None:
+        if not self.audit_logger:
+            return
+        rows = self.audit_logger.get_rows_for_export(date_from=date_from, date_to=date_to)
+        export_logs(
+            rows,
+            fmt,
+            path,
+            signer_public_key_hex=self.audit_logger.signer.get_public_key_hex(),
+            metadata={"exporter": "audit_viewer"},
+        )
+        self.audit_logger.log_event(
+            "AUDIT_EXPORT",
+            "INFO",
+            "audit_viewer",
+            {"format": fmt, "path": path, "count": len(rows)},
+        )
+        messagebox.showinfo("Экспорт", f"Экспортировано {len(rows)} записей в {path}")
+
+    def _highlight_vault_entry(self, entry_id: str) -> None:
+        for iid, eid in self._entry_id_map.items():
+            if eid == entry_id and self.tree.exists(iid):
+                self.tree.selection_set(iid)
+                self.tree.see(iid)
+                break
 
     def show_settings(self):
-        """Показать настройки"""
-        timeout = self.config.get("clipboard_timeout_seconds", ClipboardService.DEFAULT_TIMEOUT)
-        if timeout == 0:
-            timeout_display = "never"
-        else:
-            timeout_display = str(timeout)
-        value = simpledialog.askstring(
-            "Clipboard timeout",
-            "Введите таймер автоочистки (5-300 сек) или 'never':",
-            initialvalue=timeout_display,
-            parent=self.root,
+        """Настройки буфера обмена и пресеты (CFG-3, CLIP-3)."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Настройки буфера обмена")
+        dialog.geometry("420x320")
+        dialog.transient(self.root)
+
+        ttk.Label(dialog, text="Пресет:").pack(anchor=tk.W, padx=12, pady=(12, 2))
+        preset_var = tk.StringVar(value=self.settings_adapter.get("clipboard_preset", "standard"))
+        preset_cb = ttk.Combobox(
+            dialog,
+            textvariable=preset_var,
+            values=list(CLIPBOARD_PRESETS.keys()),
+            state="readonly",
         )
-        if value is None:
-            return
-        if not self.clipboard_service:
-            messagebox.showerror("Ошибка", "Clipboard service не инициализирован")
-            return
-        try:
-            if value.strip().lower() == "never":
-                self.clipboard_service.set_auto_clear_timeout(None)
-            else:
-                self.clipboard_service.set_auto_clear_timeout(int(value))
-            messagebox.showinfo("Настройки", "Таймер автоочистки сохранен")
-        except Exception as exc:
-            messagebox.showerror("Ошибка", str(exc))
+        preset_cb.pack(fill=tk.X, padx=12)
+
+        ttk.Label(dialog, text="Таймер (5-300 или never):").pack(anchor=tk.W, padx=12, pady=(8, 2))
+        timeout_raw = self.settings_adapter.get("clipboard_timeout_seconds", 30)
+        timeout_var = tk.StringVar(value="never" if str(timeout_raw) == "0" else str(timeout_raw))
+        ttk.Entry(dialog, textvariable=timeout_var).pack(fill=tk.X, padx=12)
+
+        block_var = tk.BooleanVar(value=self.clipboard_service.copy_blocked if self.clipboard_service else False)
+        ttk.Checkbutton(dialog, text="Блокировать копирование", variable=block_var).pack(anchor=tk.W, padx=12, pady=4)
+
+        def apply_preset_click():
+            try:
+                apply_preset(self.settings_adapter, preset_var.get())
+                messagebox.showinfo("OK", f"Пресет «{preset_var.get()}» применён", parent=dialog)
+            except Exception as exc:
+                messagebox.showerror("Ошибка", str(exc), parent=dialog)
+
+        def save_custom():
+            if not self.clipboard_service:
+                return
+            try:
+                val = timeout_var.get().strip().lower()
+                if val == "never":
+                    self.clipboard_service.set_auto_clear_timeout(None)
+                else:
+                    self.clipboard_service.set_auto_clear_timeout(int(val))
+                self.clipboard_service.set_copy_blocked(block_var.get())
+                messagebox.showinfo("OK", "Настройки сохранены в зашифрованную БД", parent=dialog)
+            except Exception as exc:
+                messagebox.showerror("Ошибка", str(exc), parent=dialog)
+
+        btn_row = ttk.Frame(dialog)
+        btn_row.pack(pady=16)
+        ttk.Button(btn_row, text="Применить пресет", command=apply_preset_click).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="Сохранить", command=save_custom).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="Закрыть", command=dialog.destroy).pack(side=tk.LEFT, padx=4)
 
     def show_about(self):
         """О программе"""
@@ -837,12 +1027,16 @@ class MainWindow:
 
             eid = entry["id"]
             short = eid[:8]
+            has_totp = bool(entry.get("totp_secret") or entry.get("totp"))
             values = (
                 short,
                 entry.get("title") or "",
                 masked,
                 url_display,
                 upd_display,
+                "👤",
+                "🔑",
+                "⏱" if has_totp else "—",
             )
             self.tree.insert("", tk.END, iid=eid, values=values)
             self._entry_id_map[short] = eid
@@ -932,12 +1126,87 @@ class MainWindow:
         menu.add_command(label="Copy All", command=self.copy_selected_all)
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _on_tree_click(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self.tree.identify_column(event.x)
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            return
+        self.tree.selection_set(row_id)
+        entry_id = row_id if row_id in self._entry_id_map.values() else self._entry_id_map.get(
+            self.tree.item(row_id)["values"][0], row_id
+        )
+        if col == "#6":
+            self._copy_field_for_entry(entry_id, "username", "username")
+        elif col == "#7":
+            self._copy_field_for_entry(entry_id, "password", "password")
+        elif col == "#8":
+            self._copy_totp_for_entry(entry_id)
+
+    def _copy_field_for_entry(self, entry_id: str, field_name: str, data_type: str):
+        if not self.clipboard_service or not self.entry_manager:
+            return
+        entry = self.entry_manager.get_entry(entry_id)
+        if not entry:
+            messagebox.showerror("Ошибка", "Запись не найдена")
+            return
+        value = entry.get(field_name, "")
+        if not value:
+            messagebox.showwarning("Пусто", f"Поле {field_name} пустое")
+            return
+        try:
+            self.clipboard_service.copy_to_clipboard(value, data_type=data_type, source_entry_id=entry_id)
+        except PermissionError:
+            messagebox.showwarning("Сейф заблокирован", "Разблокируйте сейф")
+        except Exception as exc:
+            messagebox.showerror("Ошибка", str(exc))
+
+    def _copy_totp_for_entry(self, entry_id: str):
+        if not self.clipboard_service or not self.entry_manager:
+            return
+        entry = self.entry_manager.get_entry(entry_id)
+        secret = (entry or {}).get("totp_secret") or (entry or {}).get("totp")
+        if not secret:
+            messagebox.showinfo("TOTP", "У записи нет TOTP секрета")
+            return
+        try:
+            code = self.clipboard_service.copy_totp(secret, source_entry_id=entry_id)
+            self.toast.show(f"TOTP copied: {code} (30s)", "info")
+        except PermissionError:
+            messagebox.showwarning("Сейф заблокирован", "Разблокируйте сейф")
+        except Exception as exc:
+            messagebox.showerror("Ошибка", str(exc))
+
+    def _schedule_audit_export(self, frequency: str, path: str, password: str) -> None:
+        import threading
+
+        intervals = {"daily": 86400, "weekly": 604800, "monthly": 2592000}
+        sec = intervals.get(frequency.lower(), 86400)
+
+        def run_export():
+            if self.audit_logger:
+                rows = self.audit_logger.get_rows_for_export()
+                export_logs(
+                    rows,
+                    "json",
+                    path,
+                    signer_public_key_hex=self.audit_logger.signer.get_public_key_hex(),
+                )
+
+        def loop():
+            run_export()
+            t = threading.Timer(sec, loop)
+            t.daemon = True
+            t.start()
+            self._export_schedule_timer = t
+
+        loop()
+        messagebox.showinfo("Расписание", f"Экспорт {frequency} → {path}")
+
     def _on_clipboard_copied(self, data):
-        timeout = data.get("timeout") if isinstance(data, dict) else None
-        if timeout is None:
-            self.status_var.set("Clipboard активен (без автоочистки)")
-        else:
-            self.status_var.set(f"Clipboard активен, автоочистка через {timeout}с")
+        self._update_clipboard_status()
 
     def _on_clipboard_cleared(self, data):
         reason = data.get("reason") if isinstance(data, dict) else "unknown"
@@ -949,6 +1218,10 @@ class MainWindow:
         self.refresh_entries()
     def on_closing(self):
         """Обработка закрытия окна"""
+        if self._clipboard_tick_id:
+            self.root.after_cancel(self._clipboard_tick_id)
+        if self.audit_logger:
+            self.audit_logger.stop_periodic_verification()
         if self.clipboard_monitor:
             self.clipboard_monitor.stop()
         if self.clipboard_service:

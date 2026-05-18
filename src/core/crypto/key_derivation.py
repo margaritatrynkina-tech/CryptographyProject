@@ -1,9 +1,10 @@
 from argon2 import PasswordHasher, Type
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 import os
 import secrets
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 class KeyDerivation:
     def __init__(self, config):
@@ -42,3 +43,19 @@ class KeyDerivation:
             iterations=self.pbkdf2_iterations,
         )
         return kdf.derive(password.encode('utf-8'))
+
+    def derive_audit_signing_key(self, password: str, salt: bytes) -> bytes:
+        return self._hkdf_derive(password, salt, b"audit-signing", 32)
+
+    def derive_audit_encryption_key(self, password: str, salt: bytes) -> bytes:
+        return self._hkdf_derive(password, salt, b"audit-encryption", 32)
+
+    def _hkdf_derive(self, password: str, salt: bytes, info: bytes, length: int) -> bytes:
+        master = self.derive_encryption_key(password, salt)
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=length,
+            salt=None,
+            info=info,
+        )
+        return hkdf.derive(master)
