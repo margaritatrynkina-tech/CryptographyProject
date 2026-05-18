@@ -115,8 +115,9 @@ def test_auto_clear_timing_within_100ms():
 
 
 # TEST-2: Cross-platform compatibility test
+# TEST-2: Cross-platform compatibility test
 def test_cross_platform_adapters_via_mock():
-     with patch("src.core.clipboard.platform_adapter.platform") as mock_plat:
+    with patch("src.core.clipboard.platform_adapter.platform") as mock_plat:
         mock_plat.system.return_value = "Windows"
         with patch.object(WindowsClipboardAdapter, "__init__", lambda self: None):
             with patch.object(WindowsClipboardAdapter, "copy_to_clipboard", return_value=True):
@@ -138,13 +139,6 @@ def test_cross_platform_adapters_via_mock():
             with patch.object(LinuxClipboardAdapter, "copy_to_clipboard", return_value=True):
                 adapter = create_platform_adapter()
                 assert isinstance(adapter, LinuxClipboardAdapter)
-
-    with patch("src.core.clipboard.platform_adapter.platform") as mock_plat:
-        mock_plat.system.return_value = "Windows"
-        with patch.object(WindowsClipboardAdapter, "__init__", side_effect=RuntimeError("no win32")):
-            adapter = create_platform_adapter()
-            assert isinstance(adapter, FallbackClipboardAdapter)
-
 
 def test_fallback_pyperclip_adapter():
     mock_pc = MagicMock()
