@@ -1,0 +1,6 @@
+{
+    "clipboard_timeout": 5,
+    "clipboard_copy_blocked": false,
+    "ephemeral_mode": false,
+    "security_level": "standard"
+}
