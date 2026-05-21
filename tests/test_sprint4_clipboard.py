@@ -153,12 +153,6 @@ def test_fallback_pyperclip_adapter():
 
 # TEST-3: Memory security test
 def test_memory_security_no_plaintext_in_process():
-    """
-    TEST-3 (TZ):
-    1. Copy password to clipboard (Windows + CryptProtectMemory)
-    2. MiniDumpWriteDump of isolated process
-    3. Assert password NOT in plaintext in dump (only obfuscated in heap)
-    """
     import base64
     import subprocess
     import sys
