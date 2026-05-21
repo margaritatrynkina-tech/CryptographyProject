@@ -3,15 +3,15 @@ import secrets
 import sys
 from typing import Optional
 
-# Windows CryptProtectMemory
+# Windows CryptProtectMemory (crypt32.dll)
 if sys.platform == "win32":
     _CRYPTPROTECTMEMORY_SAME_PROCESS = 0x00
     try:
-        _kernel32 = ctypes.windll.kernel32
+        _crypt32 = ctypes.windll.crypt32
     except Exception:
-        _kernel32 = None
+        _crypt32 = None
 else:
-    _kernel32 = None
+    _crypt32 = None
     try:
         _libc = ctypes.CDLL("libc.so.6")
     except Exception:
@@ -34,12 +34,14 @@ def secure_wipe(buf: bytearray) -> None:
 def lock_sensitive_bytes(data: bytes) -> None:
     if not data:
         return
-    buf = (ctypes.c_char * len(data)).from_buffer_copy(data)
-    if sys.platform == "win32" and _kernel32:
+    size = ((len(data) + 15) // 16) * 16
+    buf = bytearray(data) + bytearray(size - len(data))
+    if sys.platform == "win32" and _crypt32:
         try:
-            _kernel32.CryptProtectMemory(
-                ctypes.byref(buf),
-                len(data),
+            c_buf = (ctypes.c_char * len(buf)).from_buffer(buf)
+            _crypt32.CryptProtectMemory(
+                ctypes.byref(c_buf),
+                len(buf),
                 _CRYPTPROTECTMEMORY_SAME_PROCESS,
             )
         except Exception:
@@ -63,10 +65,19 @@ class SecureString:
 
     def __init__(self, plaintext: str):
         raw = plaintext.encode("utf-8")
-        self._mask = secrets.token_bytes(32)
-        obf = obfuscate(raw, self._mask)
-        self._obfuscated = bytearray(obf)
+        self._init_from_bytes(raw)
         del raw
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> "SecureString":
+        """Create from UTF-8 bytes without an intermediate str in caller."""
+        inst = cls.__new__(cls)
+        inst._init_from_bytes(bytes(data))
+        return inst
+
+    def _init_from_bytes(self, raw: bytes) -> None:
+        self._mask = secrets.token_bytes(32)
+        self._obfuscated = bytearray(obfuscate(raw, self._mask))
 
     def reveal(self) -> str:
         buf = bytearray(deobfuscate(bytes(self._obfuscated), self._mask))
@@ -74,6 +85,19 @@ class SecureString:
             return buf.decode("utf-8")
         finally:
             secure_wipe(buf)
+
+    def reveal_utf16_buffer(self) -> bytearray:
+        """UTF-16LE + null terminator without creating a Python str (ASCII-safe)."""
+        utf8 = bytearray(deobfuscate(bytes(self._obfuscated), self._mask))
+        try:
+            out = bytearray()
+            for byte in utf8:
+                out.append(byte)
+                out.append(0)
+            out.extend(b"\x00\x00")
+            return out
+        finally:
+            secure_wipe(utf8)
 
     def wipe(self) -> None:
         secure_wipe(self._obfuscated)

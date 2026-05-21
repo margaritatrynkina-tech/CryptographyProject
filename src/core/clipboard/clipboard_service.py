@@ -94,14 +94,22 @@ class ClipboardService:
             lock_sensitive_bytes(bytes(secure._obfuscated))
 
             try:
-                plaintext = secure.reveal()
                 if ephemeral:
-                    self._ephemeral.set(plaintext, ttl_seconds=self.get_auto_clear_timeout() or 60)
-                    copied = True
+                    plaintext = secure.reveal()
+                    try:
+                        self._ephemeral.set(plaintext, ttl_seconds=self.get_auto_clear_timeout() or 60)
+                        copied = True
+                    finally:
+                        del plaintext
+                elif hasattr(self.adapter, "copy_from_secure"):
+                    copied = self.adapter.copy_from_secure(secure)
                 else:
-                    copied = self.adapter.copy_to_clipboard(plaintext)
+                    plaintext = secure.reveal()
+                    try:
+                        copied = self.adapter.copy_to_clipboard(plaintext)
+                    finally:
+                        del plaintext
             finally:
-                del plaintext
                 unlock_sensitive_bytes()
 
             if not copied:

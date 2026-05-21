@@ -1,3 +1,4 @@
+import ctypes
 import os
 import platform
 import shutil
@@ -46,49 +47,75 @@ class FallbackClipboardAdapter(ClipboardAdapter):
 
 
 class WindowsClipboardAdapter(ClipboardAdapter):
+    CF_UNICODETEXT = 13
+
     def __init__(self):
-        import win32clipboard
-        import win32con
-        self._clipboard = win32clipboard
-        self._unicode_format = win32con.CF_UNICODETEXT
+        from ctypes import wintypes
+        self._user32 = ctypes.windll.user32
+        self._kernel32 = ctypes.windll.kernel32
+        self._kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        self._kernel32.GlobalLock.restype = ctypes.c_void_p
+        self._kernel32.GlobalSize.argtypes = [wintypes.HGLOBAL]
+        self._kernel32.GlobalSize.restype = ctypes.c_size_t
+        self._unicode_format = self.CF_UNICODETEXT
+        self._clipboard = None
 
     def copy_to_clipboard(self, data: str) -> bool:
+        """Copy via CryptProtectMemory — no long-lived plaintext in process heap."""
+        from src.core.clipboard.windows_protected_memory import set_clipboard_unicode_protected
         try:
-            self._clipboard.OpenClipboard()
-            self._clipboard.EmptyClipboard()
-            self._clipboard.SetClipboardData(self._unicode_format, data)
-            return True
+            return set_clipboard_unicode_protected(None, self._unicode_format, data)
         except Exception:
             return False
+
+    def copy_from_secure(self, secure) -> bool:
+        """Copy from SecureString without a persistent plaintext str in memory."""
+        import gc
+        from src.core.clipboard.windows_protected_memory import set_clipboard_from_utf16_buffer
+        buf = secure.reveal_utf16_buffer()
+        try:
+            return set_clipboard_from_utf16_buffer(buf, self._unicode_format)
         finally:
-            try:
-                self._clipboard.CloseClipboard()
-            except Exception:
-                pass
+            from src.core.clipboard.secure_memory import secure_wipe
+            secure_wipe(buf)
+            del buf
+            gc.collect()
 
     def clear_clipboard(self) -> bool:
         try:
-            self._clipboard.OpenClipboard()
-            self._clipboard.EmptyClipboard()
+            if not self._user32.OpenClipboard(None):
+                return False
+            self._user32.EmptyClipboard()
             return True
         except Exception:
             return False
         finally:
             try:
-                self._clipboard.CloseClipboard()
+                self._user32.CloseClipboard()
             except Exception:
                 pass
 
     def get_clipboard_content(self) -> Optional[str]:
         try:
-            self._clipboard.OpenClipboard()
-            data = self._clipboard.GetClipboardData(self._unicode_format)
-            return data if isinstance(data, str) else None
+            if not self._user32.OpenClipboard(None):
+                return None
+            h_data = self._user32.GetClipboardData(self._unicode_format)
+            if not h_data:
+                return None
+            ptr = self._kernel32.GlobalLock(h_data)
+            if not ptr:
+                return None
+            try:
+                size = self._kernel32.GlobalSize(h_data)
+                raw = ctypes.string_at(ptr, size)
+                return raw.decode("utf-16-le").rstrip("\x00")
+            finally:
+                self._kernel32.GlobalUnlock(h_data)
         except Exception:
             return None
         finally:
             try:
-                self._clipboard.CloseClipboard()
+                self._user32.CloseClipboard()
             except Exception:
                 pass
 

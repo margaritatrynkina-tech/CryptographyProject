@@ -115,7 +115,6 @@ def test_auto_clear_timing_within_100ms():
 
 
 # TEST-2: Cross-platform compatibility test
-# TEST-2: Cross-platform compatibility test
 def test_cross_platform_adapters_via_mock():
     with patch("src.core.clipboard.platform_adapter.platform") as mock_plat:
         mock_plat.system.return_value = "Windows"
@@ -154,16 +153,24 @@ def test_fallback_pyperclip_adapter():
 
 # TEST-3: Memory security test
 def test_memory_security_no_plaintext_in_process():
+    """
+    TEST-3 (TZ):
+    1. Copy password to clipboard (Windows + CryptProtectMemory)
+    2. MiniDumpWriteDump of isolated process
+    3. Assert password NOT in plaintext in dump (only obfuscated in heap)
+    """
     import base64
     import subprocess
     import sys
     import tempfile
     from pathlib import Path
 
-    needle_b = base64.b64decode(b"U1VQRVJfU0VDUkVUX1BBU1NXT1JEXzEyMw==")
+    if sys.platform != "win32":
+        pytest.skip("TEST-3 minidump requires Windows")
 
+    needle_b = base64.b64decode(b"U1VQRVJfU0VDUkVUX1BBU1NXT1JEXzEyMw==")
     sec = SecureString(needle_b.decode("ascii"))
-    assert needle_b not in bytes(sec._obfuscated)
+    assert needle_b not in bytes(sec._obfuscated), "Only obfuscated form in SecureString"
     sec.wipe()
 
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -176,11 +183,19 @@ def test_memory_security_no_plaintext_in_process():
         capture_output=True,
         text=True,
     )
-    if result.returncode == 2:
-        pytest.fail("Obfuscated buffer contained plaintext in worker")
-    if result.returncode == 3:
-        pytest.fail("Worker copy failed")
-    assert result.returncode == 0, f"Memory security worker failed (exit {result.returncode})"
+    codes = {
+        1: "Plaintext password found in MiniDumpWriteDump",
+        2: "Obfuscated buffer contained plaintext",
+        3: "Clipboard copy failed (CryptProtectMemory / SetClipboardData)",
+        4: "Password file mismatch",
+        6: "WindowsClipboardAdapter unavailable",
+        7: "MiniDumpWriteDump failed",
+    }
+    if result.returncode in codes:
+        pytest.fail(f"{codes[result.returncode]}\nstderr: {result.stderr}")
+    assert result.returncode == 0, (
+        f"Memory security worker failed (exit {result.returncode}): {result.stderr}"
+    )
 
 
 # TEST-4: Concurrency test
