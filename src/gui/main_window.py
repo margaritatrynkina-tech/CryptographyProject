@@ -153,6 +153,23 @@ class MainWindow:
         file_menu.add_command(label="Создать резервную копию...", command=self.backup_database)
         file_menu.add_command(label="Восстановить из копии...", command=self.restore_database)
         file_menu.add_separator()
+        # Sprint 6: Import/Export (UI-1, UI-2)
+        self._export_menu_item_index = None
+        self._import_menu_item_index = None
+        file_menu.add_command(
+            label="Экспорт...",
+            command=self.show_export_dialog,
+            accelerator="Ctrl+E",
+            state=tk.DISABLED,
+        )
+        file_menu.add_command(
+            label="Импорт...",
+            command=self.show_import_dialog,
+            accelerator="Ctrl+I",
+            state=tk.DISABLED,
+        )
+        self._file_menu = file_menu
+        file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self.on_closing, accelerator="Ctrl+Q")
 
         # Правка
@@ -184,6 +201,9 @@ class MainWindow:
         self.root.bind('<F2>', lambda e: self.edit_entry())
         self.root.bind('<Delete>', lambda e: self.delete_entry())
         self.root.bind('<F5>', lambda e: self.refresh_entries())
+        # Sprint 6: Import/Export shortcuts (UI-1, UI-2)
+        self.root.bind('<Control-e>', lambda e: self.show_export_dialog())
+        self.root.bind('<Control-i>', lambda e: self.show_import_dialog())
 
     def _init_settings_adapter(self) -> None:
         if self.db and self.key_manager:
@@ -432,8 +452,10 @@ class MainWindow:
             pass_entry.clear()
             if ok:
                 self._init_audit_logger(pwd)
+                self._set_import_export_menu_state(tk.NORMAL)
                 dialog.destroy()
                 self.refresh_entries()
+                self._update_import_export_menu_state()
             else:
                 status_var.set("Неверный пароль")
 
@@ -965,6 +987,7 @@ class MainWindow:
         ttk.Button(btn_row, text="Сохранить", command=save_custom).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_row, text="Закрыть", command=dialog.destroy).pack(side=tk.LEFT, padx=4)
 
+
     def show_about(self):
         """О программе"""
         about_text = """CryptoSafe Manager v1.0
@@ -1052,6 +1075,35 @@ class MainWindow:
         key_ok = self.key_manager is not None and self.key_manager.get_encryption_key() is not None
         return bool(session_ok and key_ok)
 
+    def _update_import_export_menu_state(self):
+        """Включить/выключить пункты меню импорта/экспорта в зависимости от разблокировки сейфа"""
+        if not hasattr(self, '_file_menu'):
+            return
+
+        enabled = self.is_vault_unlocked()
+        state = tk.NORMAL if enabled else tk.DISABLED
+
+        # Находим пункты меню по индексу (они добавлены в setup_menu в определённом порядке)
+        # В setup_menu пункты добавлены так:
+        # 0: Новая база...
+        # 1: Открыть базу...
+        # 2: Создать резервную копию...
+        # 3: Восстановить из копии...
+        # 4: separator
+        # 5: Экспорт...
+        # 6: Импорт...
+        # 7: separator
+        # 8: Выход
+
+        menu = self._file_menu
+        try:
+            # Экспорт - индекс 5
+            menu.entryconfig(5, state=state)
+            # Импорт - индекс 6
+            menu.entryconfig(6, state=state)
+        except Exception:
+            pass
+
     def _selected_entry_id(self):
         selected = self.tree.selection()
         if not selected:
@@ -1124,7 +1176,16 @@ class MainWindow:
         menu.add_command(label="Copy Username", command=self.copy_selected_username)
         menu.add_command(label="Copy Password", command=self.copy_selected_password)
         menu.add_command(label="Copy All", command=self.copy_selected_all)
+        menu.add_separator()
+        menu.add_command(label="Поделиться записью...", command=self._share_selected_entry)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _share_selected_entry(self):
+        entry_id = self._selected_entry_id()
+        if not entry_id:
+            messagebox.showwarning("Нет выбора", "Выберите запись для шаринга")
+            return
+        self.show_sharing_dialog(entry_id)
 
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)
@@ -1235,8 +1296,403 @@ class MainWindow:
                 pass
         self.root.destroy()
 
+    # ==================== IMPORT/EXPORT METHODS (Sprint 6) ====================
 
+    def show_export_dialog(self):
+        """Показать диалог экспорта"""
+        try:
+            from tkinter import messagebox
+            from src.core.import_export.exporter import VaultExporter
+            from src.gui.export_dialog import ExportDialog
+
+            # Проверяем, что сейф разблокирован
+            if not self.is_vault_unlocked():
+                messagebox.showwarning("Предупреждение", "Сейф не разблокирован")
+                return
+
+            # Создаём экспортёр
+            exporter = VaultExporter(self.entry_manager, self.key_manager)
+
+            dialog = ExportDialog(self.root, exporter)
+            result = dialog.show()
+
+            if result:
+                format_type = result.get("format")
+                password = result.get("password")
+                file_path = result.get("path")
+                self.export_to_file(format_type, password, file_path)
+
+        except ImportError as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить модуль экспорта: {e}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при открытии диалога экспорта: {e}")
+
+    def show_import_dialog(self):
+        """Показать диалог импорта"""
+        try:
+            from tkinter import messagebox
+            from src.core.import_export.importer import VaultImporter
+            from src.gui.import_dialog import ImportDialog
+
+            # Проверяем, что сейф разблокирован
+            if not self.is_vault_unlocked():
+                messagebox.showwarning("Предупреждение", "Сейф не разблокирован")
+                return
+
+            # Создаём импортёр
+            importer = VaultImporter(
+                self.entry_manager,
+                self.audit_logger,
+                None  # encryption_service пока None
+            )
+
+            dialog = ImportDialog(self.root, importer)
+            result = dialog.show()
+
+            if result:
+                file_path = result.get("path")
+                conflict = result.get("conflict")
+                dry_run = result.get("dry_run", False)
+                self.import_from_file(file_path, conflict, dry_run)
+
+        except ImportError as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить модуль импорта: {e}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при открытии диалога импорта: {e}")
+
+    def show_sharing_dialog(self, entry_id=None):
+        """Показать диалог шаринга записи"""
+        try:
+            from tkinter import messagebox
+            from src.core.import_export.sharing_service import SharingService
+            from src.gui.sharing_dialog import SharingDialog
+
+            # Если entry_id не передан, берём выбранную запись
+            if entry_id is None:
+                entry_id = self._selected_entry_id()
+                if not entry_id:
+                    messagebox.showwarning("Предупреждение", "Не выбрана запись для шаринга")
+                    return
+
+            # Проверяем, что сейф разблокирован
+            if not self.is_vault_unlocked():
+                messagebox.showwarning("Предупреждение", "Сейф не разблокирован")
+                return
+
+            sharing_service = SharingService(self.db.connection, None)
+
+            dialog = SharingDialog(self.root, sharing_service, entry_id)
+            result = dialog.show()
+
+            if result:
+                recipient = result.get("recipient")
+                expires_in = result.get("expires_in")
+                permissions = result.get("permissions")
+                self.share_entry(entry_id, recipient, expires_in, permissions)
+
+        except ImportError as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить модуль шаринга: {e}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при открытии диалога шаринга: {e}")
+
+    def export_to_file(self, format_type, password, file_path):
+        """Выполнить экспорт"""
+        try:
+            from tkinter import messagebox
+            # TODO: реальная реализация экспорта
+            messagebox.showinfo("Экспорт", f"Экспорт в {format_type} выполнен в {file_path}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка экспорта: {e}")
+
+    def import_from_file(self, file_path, conflict, dry_run):
+        """Выполнить импорт"""
+        try:
+            from tkinter import messagebox
+            if dry_run:
+                messagebox.showinfo("Импорт (просмотр)", f"Предпросмотр импорта из {file_path}")
+            else:
+                messagebox.showinfo("Импорт", f"Импорт из {file_path} выполнен")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка импорта: {e}")
+
+    def share_entry(self, entry_id, recipient, expires_in, permissions):
+        """Выполнить шаринг записи"""
+        try:
+            from tkinter import messagebox
+            messagebox.showinfo("Шаринг", f"Запись {entry_id} отправлена {recipient} на {expires_in} дней")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка шаринга: {e}")
     def run(self):
         """Запуск приложения"""
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
+
+    # ------------------------------------------------------------------
+    # Sprint 6: Import / Export / Sharing  (UI-1, UI-2, UI-3)
+    # ------------------------------------------------------------------
+
+    def _get_exporter(self):
+        """Lazily construct a VaultExporter bound to the current session."""
+        from src.core.import_export.exporter import VaultExporter
+        if not self.entry_manager or not self.audit_logger:
+            return None
+        return VaultExporter(
+            entry_manager=self.entry_manager,
+            encryption_service=None,   # exporter uses its own crypto
+            audit_logger=self.audit_logger,
+            config=self.config,
+        )
+
+    def _get_importer(self):
+        """Lazily construct a VaultImporter bound to the current session."""
+        from src.core.import_export.importer import VaultImporter
+        if not self.entry_manager or not self.audit_logger:
+            return None
+        return VaultImporter(
+            entry_manager=self.entry_manager,
+            encryption_service=None,
+            audit_logger=self.audit_logger,
+            db_manager=self.db,
+        )
+
+    def _get_sharing_service(self):
+        """Lazily construct a SharingService bound to the current session."""
+        from src.core.import_export.sharing_service import SharingService
+        if not self.db or not self.entry_manager or not self.audit_logger:
+            return None
+        return SharingService(
+            db_connection=self.db.connection,
+            encryption_service=None,
+            audit_logger=self.audit_logger,
+            entry_manager=self.entry_manager,
+        )
+
+    def show_export_dialog(self):
+        """Open the Export dialog (Ctrl+E / File → Экспорт)."""
+        if not self._require_encryption_key("show_export_dialog"):
+            return
+        exporter = self._get_exporter()
+        if exporter is None:
+            messagebox.showerror("Ошибка", "Экспорт недоступен: войдите в систему")
+            return
+
+        # Collect currently selected entry IDs from the tree
+        selected_ids = []
+        for iid in self.tree.selection():
+            eid = iid if iid in self._entry_id_map.values() else \
+                self._entry_id_map.get(
+                    (self.tree.item(iid).get("values") or [""])[0], iid
+                )
+            selected_ids.append(eid)
+
+        try:
+            from src.gui.export_dialog import ExportDialog
+            ExportDialog(
+                parent=self.root,
+                entry_manager=self.entry_manager,
+                exporter=exporter,
+                selected_ids=selected_ids,
+            )
+        except Exception as exc:
+            messagebox.showerror("Ошибка экспорта", str(exc))
+
+    def show_import_dialog(self):
+        """Open the Import dialog (Ctrl+I / File → Импорт)."""
+        if not self._require_encryption_key("show_import_dialog"):
+            return
+        importer = self._get_importer()
+        if importer is None:
+            messagebox.showerror("Ошибка", "Импорт недоступен: войдите в систему")
+            return
+        try:
+            from src.gui.import_dialog import ImportDialog
+            dlg = ImportDialog(
+                parent=self.root,
+                importer=importer,
+                entry_manager=self.entry_manager,
+            )
+            # Refresh the entry list after the dialog closes
+            self.root.wait_window(dlg.dialog)
+            self.refresh_entries()
+        except Exception as exc:
+            messagebox.showerror("Ошибка импорта", str(exc))
+
+    def show_sharing_dialog(self, entry_id: str):
+        """Open the Sharing dialog for *entry_id*."""
+        if not self._require_encryption_key("show_sharing_dialog"):
+            return
+        sharing_service = self._get_sharing_service()
+        if sharing_service is None:
+            messagebox.showerror("Ошибка", "Шаринг недоступен: войдите в систему")
+            return
+        try:
+            entry = self.entry_manager.get_entry(entry_id)
+            title = entry.get("title", "") if entry else ""
+            from src.gui.sharing_dialog import SharingDialog
+            SharingDialog(
+                parent=self.root,
+                sharing_service=sharing_service,
+                entry_id=entry_id,
+                entry_title=title,
+                db_connection=self.db.connection if self.db else None,
+            )
+        except Exception as exc:
+            messagebox.showerror("Ошибка шаринга", str(exc))
+
+    def export_to_file(self, format_type: str, password: str, file_path: str):
+        """Programmatic export — called from tests or automation.
+
+        Args:
+            format_type: One of ``"json"``, ``"csv"``, ``"bitwarden"``,
+                ``"lastpass"``.
+            password: Export encryption password (JSON only).
+            file_path: Destination file path string.
+
+        Returns:
+            :class:`ExportResult` on success, or None on failure.
+        """
+        if not self._require_encryption_key("export_to_file"):
+            return None
+        exporter = self._get_exporter()
+        if exporter is None:
+            messagebox.showerror("Ошибка", "Экспорт недоступен")
+            return None
+        try:
+            result = exporter.export_vault(
+                entry_ids=None,
+                password=password,
+                public_key=None,
+                format=format_type,
+                file_path=Path(file_path),
+            )
+            messagebox.showinfo(
+                "Экспорт завершён",
+                f"Экспортировано: {result.entry_count} записей\nФайл: {result.file_path}",
+            )
+            return result
+        except Exception as exc:
+            messagebox.showerror("Ошибка экспорта", str(exc))
+            return None
+
+    def import_from_file(
+        self,
+        file_path: str,
+        conflict: str = "skip",
+        dry_run: bool = False,
+    ):
+        """Programmatic import — called from tests or automation.
+
+        Args:
+            file_path: Path to the import file.
+            conflict: Conflict resolution strategy
+                (``"skip"``, ``"replace"``, ``"rename"``, ``"merge"``).
+            dry_run: When True, validate only without committing changes.
+
+        Returns:
+            :class:`ImportResult` on success, or None on failure.
+        """
+        if not self._require_encryption_key("import_from_file"):
+            return None
+        importer = self._get_importer()
+        if importer is None:
+            messagebox.showerror("Ошибка", "Импорт недоступен")
+            return None
+        try:
+            from pathlib import Path as _Path
+            p = _Path(file_path)
+            ext = p.suffix.lower()
+
+            if dry_run:
+                result = importer.validate_import_file(
+                    p, "json" if ext == ".json" else "csv"
+                )
+                messagebox.showinfo(
+                    "Предпросмотр импорта",
+                    f"Записей: {result.get('entry_count', '?')}\n"
+                    f"Ошибок: {len(result.get('errors', []))}",
+                )
+                return result
+
+            if ext == ".json":
+                result = importer.import_json(p, password=None, conflict_strategy=conflict)
+            else:
+                result = importer.import_csv(p, conflict_strategy=conflict)
+
+            self.refresh_entries()
+            messagebox.showinfo(
+                "Импорт завершён",
+                f"Импортировано: {result.successful_imports} / {result.total_entries}",
+            )
+            return result
+        except Exception as exc:
+            messagebox.showerror("Ошибка импорта", str(exc))
+            return None
+
+    def share_entry(
+        self,
+        entry_id: str,
+        recipient: str,
+        expires_in: int = 7,
+        permissions: dict = None,
+    ):
+        """Programmatic share — called from tests or automation.
+
+        Args:
+            entry_id: Vault entry ID to share.
+            recipient: Recipient identifier string.
+            expires_in: Days until the share expires (1–30).
+            permissions: Dict with ``read_only`` key (default True).
+
+        Returns:
+            Share result dict on success, or None on failure.
+        """
+        if not self._require_encryption_key("share_entry"):
+            return None
+        sharing_service = self._get_sharing_service()
+        if sharing_service is None:
+            messagebox.showerror("Ошибка", "Шаринг недоступен")
+            return None
+        try:
+            from src.core.import_export.models import EncryptionMethod
+            perms = permissions or {"read_only": True}
+            result = sharing_service.share_entry(
+                entry_id=entry_id,
+                recipient=recipient,
+                permissions=perms,
+                expires_in_days=expires_in,
+                encryption_method=EncryptionMethod.PASSWORD,
+                password="shared",   # caller should supply a real password
+            )
+            messagebox.showinfo(
+                "Шаринг создан",
+                f"Share ID: {result['share_id']}\nИстекает: {result['expires_at']}",
+            )
+            return result
+        except Exception as exc:
+            messagebox.showerror("Ошибка шаринга", str(exc))
+            return None
+
+    def _set_import_export_menu_state(self, state: str) -> None:
+        """Enable or disable the Import/Export menu items (UI-1, UI-2).
+
+        Called after vault unlock / lock events.
+
+        Args:
+            state: ``tk.NORMAL`` or ``tk.DISABLED``.
+        """
+        try:
+            # The Export item is at index 5, Import at index 6 in the File menu
+            # (after New, Open, Backup, Restore, separator, Export, Import, separator, Quit)
+            self._file_menu.entryconfigure("Экспорт...", state=state)
+            self._file_menu.entryconfigure("Импорт...", state=state)
+        except Exception:
+            pass  # Menu may not be initialised yet
+
+    def _on_user_logged_out(self, _data=None) -> None:
+        """Handle vault lock — disable import/export menu items."""
+        self._set_import_export_menu_state(tk.DISABLED)
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self._entry_id_map.clear()
+        self._display_order_ids.clear()
+        self.status_var.set("Сейф заблокирован")

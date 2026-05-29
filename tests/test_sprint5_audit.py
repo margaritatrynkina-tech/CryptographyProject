@@ -61,25 +61,72 @@ def test_integrity_tampering_detected(audit_env):
 
 # TEST-2: Performance test
 def test_performance_logging_and_verification(audit_env):
+    import time
+    import statistics
+
     logger = audit_env["logger"]
     signer = audit_env["signer"]
+    print("TEST-2: Performance Test (10,000 событий)")
+
+    print("\n[1] Логирование 10,000 событий...")
 
     times = []
+    start_total = time.perf_counter()
+
     for i in range(10000):
         start = time.perf_counter()
         logger.log_event("PERF_EVENT", "INFO", "perf_test", {"i": i})
         times.append((time.perf_counter() - start) * 1000)
 
+        if (i + 1) % 2000 == 0:
+            print(f"    Прогресс: {i + 1}/10000 записей")
+
+    end_total = time.perf_counter()
+    total_time = (end_total - start_total) * 1000
+
+    # Статистика
     avg_ms = sum(times) / len(times)
+    min_ms = min(times)
+    max_ms = max(times)
+    median_ms = statistics.median(times)
+
+    print(f"\n    Результаты логирования:")
+    print(f"Общее время:      {total_time:.2f} ms ({total_time / 1000:.2f} сек)")
+    print(f"Среднее время:    {avg_ms:.3f} ms")
+    print(f"Медиана:          {median_ms:.3f} ms")
+    print(f"Минимум:          {min_ms:.3f} ms")
+    print(f"Максимум:         {max_ms:.3f} ms")
+
+    if avg_ms < 10:
+        print(f"\n     Критерий выполнен: {avg_ms:.2f}ms < 10ms")
+    else:
+        print(f"\n     Критерий не выполнен: {avg_ms:.2f}ms >= 10ms")
+
     assert avg_ms < 10, f"Average log time {avg_ms:.2f}ms exceeds 10ms"
+    print("\n[2] Верификация последних 1000 записей...")
 
     start = time.perf_counter()
     result = AuditLogVerifier(signer).verify_connection(
         audit_env["db"].connection, limit=1000
     )
     elapsed = time.perf_counter() - start
+
+    print(f"\n    Результаты верификации:")
+    print(f"Время:            {elapsed * 1000:.2f} ms ({elapsed:.3f} сек)")
+    print(f"Проверено:        {result.get('total_entries', 0)} записей")
+    print(f"Валидных:         {result.get('valid_entries', 0)} записей ")
+    print(f"Невалидных:       {len(result.get('invalid_entries', []))} записей ")
+
+    # Проверка критерия
+    if elapsed < 1.0:
+        print(f"\n     Критерий выполнен: {elapsed:.2f}сек < 1сек")
+    else:
+        print(f"\n     Критерий не выполнен: {elapsed:.2f}сек >= 1сек")
+
     assert elapsed < 1.0, f"Verification of 1000 entries took {elapsed:.2f}s"
-    assert result["valid_entries"] == 1000
+    assert result["valid_entries"] == 1000, "Not all entries are valid"
+
+    print(f"ИТОГ: {avg_ms:.2f}ms / запись | Верификация: {elapsed * 1000:.0f}ms |  PASS")
 
 
 # TEST-3: Export/import test

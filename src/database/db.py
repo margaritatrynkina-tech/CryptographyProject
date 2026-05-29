@@ -130,7 +130,58 @@ class DatabaseManager:
             ('audit_max_entries', '10000', 0),
             ('audit_max_age_days', '365', 0),
         ])
-        cursor.execute("PRAGMA user_version = 4")
+        # Sprint 6: Import/Export tables (DB-1, DB-2, DB-3)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS shared_entries (
+                shared_id TEXT PRIMARY KEY,
+                original_entry_id TEXT NOT NULL,
+                encryption_method TEXT NOT NULL DEFAULT 'password',
+                recipient_info TEXT,
+                permissions TEXT,
+                shared_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shared_entry ON shared_entries(original_entry_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shared_expires ON shared_entries(expires_at)"
+        )
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS import_export_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation_type TEXT NOT NULL,
+                format TEXT NOT NULL,
+                encryption_method TEXT,
+                entry_count INTEGER DEFAULT 0,
+                file_size INTEGER DEFAULT 0,
+                checksum TEXT,
+                verification_status TEXT DEFAULT 'ok',
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ieh_timestamp ON import_export_history(timestamp)"
+        )
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                contact_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                identifier TEXT NOT NULL,
+                public_key TEXT NOT NULL,
+                key_fingerprint TEXT NOT NULL,
+                last_used DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contacts_identifier ON contacts(identifier)"
+        )
+
+        cursor.execute("PRAGMA user_version = 5")
         self._conn.commit()
         print("Схема БД инициализирована")
 
