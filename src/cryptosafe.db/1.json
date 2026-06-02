@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "cryptosafe_export": true,
+  "timestamp": "2026-06-01T07:34:52.625635Z",
+  "metadata": {
+    "export_id": "5411bf40-0830-422a-b22b-84745553fcae",
+    "timestamp": "2026-06-01T07:34:52.625635Z",
+    "format": "json",
+    "entry_count": 1,
+    "filter_criteria": null,
+    "audit_signature": null,
+    "public_key": null,
+    "app_version": "1.0"
+  },
+  "encryption": {
+    "method": "password",
+    "algorithm": "AES-256-GCM",
+    "kdf": "PBKDF2-HMAC-SHA256",
+    "iterations": 100000,
+    "salt": "RkZp014/iksNWuibGG1bmg==",
+    "nonce": "YGKEFOJ2VeAQ+g+7"
+  },
+  "data": "kcAwufesmw6g5kgu8algZCuBAi1sq9M8qYvITX+CgQMSV1vIICHmsC1MgFcyqqFi5yYnagntcVVnCFFXWsNswdohUax7J0QANUprY3bfbcO7RxaQMXHafZXkrCnxXdeTaCP9NeCZwRLc/klnb6JsixC87RtzU01l/C9iEx0rZtzapscbBZSSFydULCyVEQhPdZTBW0bNZf094tXVGXyP/YQNhQ6sUQbWxuoJViadsVHacAVPZ/sUqUMokq8P4PipKTzMofVYig3Nh/kzT4o6VKWCS1ojWcQx0p24ZT5zDJvSUSiGap4nIKolvcl76OmY3hgK/tL2dSAdDR5qgOY7blyhzmiwrOTbB18/7H59CwilaLRA",
+  "integrity": {
+    "hash": "c22095dd73a73952a6b1d561190e494f85e6fbaf3805bda01913841adbb8c9c8",
+    "signature": ""
+  }
+}

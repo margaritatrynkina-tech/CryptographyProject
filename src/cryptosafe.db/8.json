@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "cryptosafe_export": true,
+  "timestamp": "2026-06-02T07:56:00.153386Z",
+  "metadata": {
+    "export_id": "45134c69-ac45-45fa-b0c9-955c7608c1b7",
+    "timestamp": "2026-06-02T07:56:00.153386Z",
+    "format": "json",
+    "entry_count": 2,
+    "filter_criteria": null,
+    "audit_signature": null,
+    "public_key": null,
+    "app_version": "1.0"
+  },
+  "encryption": {
+    "method": "password",
+    "algorithm": "AES-256-GCM",
+    "kdf": "PBKDF2-HMAC-SHA256",
+    "iterations": 100000,
+    "salt": "Syo8zaZNxMuQoExLj5Kmfw==",
+    "nonce": "0UcmnMZj4deYgZND"
+  },
+  "data": "TbMyTcam7aklfdpbtvfUBCUpvxDDk8Uw3QzEDrRjBgjCiTLIx/JPYczcYQahvRt1HbYIfjV6S7/QKcXQQIpu7FQMvJ0HF/k9tYi2LeJfkHym2+A4wG/bDHCLpDUAfFywaufBV9Ro1rXg4ziEI7shnne6qQEMhDayLByWBWrFn7Wrdrq+OjTq9xuV9zCivd3wiBHBNr8a7hq1BaPXA8aF8/nFkO3lQhMVW4iPnJ6D7a4Fhtlj7lF9xJ87Hz9T1GBEqPxPIUiN/dTP8etuobVwtmEQUDTv7qiURVJY+pGLV/4xYaYIFihkgED6Mls8lLf+Ojq0aVL7qTkKLKAzkQnktDhxBg2ZWhhxS7/tDTjJhAQ+omb+sR7WqBgSrL14aURTKjpV2cdD8x8B5RZwoA8bozzwWnLHEcEsixjNuZJ5Tk+Y2JhGmV34nLaqircL8C0it+H9DfzdD6XKmvKXuiMQjM06dgEoWWSACqZSNxX2Spfu5+KxzLNHGgGcwMSd5bUgantT9qfyyIZ3BmtGCg7QbpY1lwMVGEPoPP974qh0Xyx+1ogf6PpliBRal6+z8BvDopGFph9sbgJFf/G39sq5MADnUWuxlMai1N+7vNd1zAUOzPVc06EkYKeoQRbSNelRcxWVMEcIbw2OqHaMLkoE8dsVdlmcbJZ+IAw=",
+  "integrity": {
+    "hash": "8bde4980c53118372883572eca6e9e902168a1808546ee2a1a2cfa1301dd8a8e",
+    "signature": ""
+  }
+}
