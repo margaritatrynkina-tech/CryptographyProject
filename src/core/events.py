@@ -11,6 +11,12 @@ class EventType(Enum):
     CLIPBOARD_COPIED = "clipboard_copied"
     CLIPBOARD_CLEARED = "clipboard_cleared"
     AUDIT_LOG_ENTRY = "audit_log_entry"  # Для Sprint 5
+    # Sprint 7: Security Hardening events
+    VAULT_AUTO_LOCKED = "vault_auto_locked"
+    VAULT_UNLOCKED = "vault_unlocked"
+    PANIC_MODE_ACTIVATED = "panic_mode_activated"
+    PANIC_MODE_DEACTIVATED = "panic_mode_deactivated"
+    SECURITY_PROFILE_CHANGED = "security_profile_changed"
 class EventSystem:
     def __init__(self):
         self._handlers: Dict[EventType, List[Callable]] = {}

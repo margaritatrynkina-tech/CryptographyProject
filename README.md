@@ -38,24 +38,43 @@
 - [x] Уведомления о копировании/очистке
 - [x] Очистка буфера при закрытии/блокировке сейфа
 - [x] Поддержка `pyperclip` как fallback
-- [ ] Генератор паролей (перенесён в Sprint 5)
-- [ ] Индикатор сложности (перенесён в Sprint 5)
 
-### Sprint 5 — Аудит и журналы
-- [ ] Полный журнал действий
-- [ ] Просмотрщик аудита
-- [ ] Экспорт журнала
-- [ ] Генератор паролей (из Sprint 4)
+### Sprint 5 — Аудит и журналы 
+- [x] Модуль `src/core/audit/` (audit_logger.py, log_signer.py, log_verifier.py, log_formatters.py)
+- [x] Криптографическое подписание логов (Ed25519 / HMAC-SHA256)
+- [x] Hash chain для защиты от подделки
+- [x] Шифрование логов в покое (AES-256-GCM)
+- [x] GUI просмотрщик аудита с фильтрацией и поиском
+- [x] Экспорт логов в JSON, CSV, PDF
+- [x] Периодическая проверка целостности (каждые 24 часа)
+- [x] Интеграция с EventSystem из Sprint 1
+- [x] Все 5 тестов (Integrity, Performance, Export/Import, Recovery, Security)
 
-### Sprint 6 — Теги и организация
-- [ ] Категории и теги
-- [ ] Группировка записей
-- [ ] Избранное
+### Sprint 6 — Импорт/Экспорт и шаринг 
+- [x] Модуль `src/core/import_export/` (exporter.py, importer.py, sharing_service.py, key_exchange.py)
+- [x] Модуль `src/core/import_export/formats/` (json_handler.py, csv_handler.py, bitwarden_handler.py, lastpass_handler.py)
+- [x] Экспорт в форматы: Encrypted JSON, CSV, Bitwarden JSON, LastPass CSV
+- [x] Импорт из: Encrypted JSON, CSV, Bitwarden JSON, LastPass CSV
+- [x] AES-256-GCM шифрование с PBKDF2 (отдельный ключ от мастер-пароля)
+- [x] Поддержка публичных ключей (RSA-2048 / ECC P-256) для экспорта
+- [x] CSV экспорт с маскировкой паролей `[ENCRYPTED]`
+- [x] Конфликт резолюция: Skip / Replace / Rename / Merge
+- [x] Dry-run режим (предпросмотр без сохранения)
+- [x] Режим эфемерного буфера (ephemeral mode)
+- [x] QR код генерация и сканирование (для обмена ключами)
+- [x] GUI диалоги: экспорта, импорта, шаринга
+- [x] Автоопределение формата при импорте (CryptoSafe / Bitwarden / LastPass)
+- [x] Интеграция с аудитом (логирование импорта/экспорта)
+- [x] Все 5 тестов (Round-trip, Interoperability, Sharing security, QR code, Performance)
 
-### Sprint 7 — Автоблокировка
-- [ ] Таймер неактивности
-- [ ] Блокировка при свертывании
-- [ ] Политика паролей
+### Sprint 7 — Security Hardening
+- [x] Защита от side-channel (`side_channel_protection.py`, constant-time сравнение)
+- [x] Безопасная память (`memory_guard.py`, `ctypes.memset`, mlock/VirtualLock)
+- [x] Мониторинг активности и автоблокировка (`activity_monitor.py`, `auto_lock.py`)
+- [x] Panic Mode и stealth (`panic_mode.py`, горячая клавиша Ctrl+Shift+Esc)
+- [x] Профили безопасности Standard / Enhanced / Paranoid (`profiles.py`)
+- [x] System Tray и фоновая работа (`system_tray.py`)
+- [x] Тесты Sprint 7 (`tests/test_sprint7.py`: secure_zero, auto_lock, panic_mode)
 
 ### Sprint 8 — Упаковка
 - [ ] Сборка в исполняемый файл
@@ -63,18 +82,6 @@
 - [ ] Инсталлятор
 
 ---
-
-##  Установка и запуск
-
-### Виртуальное окружение
-
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-python main.py
-
 cryptosafe-manager/
 src/
 ├── core/                             
@@ -90,38 +97,60 @@ src/
 │   │   ├── key_storage.py           
 │   │   ├── password_policy.py       
 │   │   └── placeholder.py           
-│   └── clipboard/                    # Sprint 4
+│   ├── clipboard/                   # Sprint 4
+│   │   ├── __init__.py
+│   │   ├── clipboard_service.py
+│   │   ├── platform_adapter.py
+│   │   └── clipboard_monitor.py
+│   ├── audit/                       # Sprint 5
+│   │   ├── __init__.py
+│   │   ├── audit_logger.py
+│   │   ├── log_signer.py
+│   │   ├── log_verifier.py
+│   │   └── log_formatters.py
+│   └── import_export/               # Sprint 6
 │       ├── __init__.py
-│       ├── clipboard_service.py      # Основная логика (таймер, очистка)
-│       ├── platform_adapter.py       # Windows/macOS/Linux адаптеры
-│       └── clipboard_monitor.py      # Защита от слежки
+│       ├── exporter.py
+│       ├── importer.py
+│       ├── sharing_service.py
+│       ├── key_exchange.py
+│       ├── models.py
+│       └── formats/
+│           ├── __init__.py
+│           ├── json_handler.py
+│           ├── csv_handler.py
+│           ├── bitwarden_handler.py
+│           └── lastpass_handler.py
 ├── database/                        
 │   ├── __init__.py
 │   └── db.py                        
 ├── gui/                             
 │   ├── __init__.py
-│   ├── main_window.py               # Добавлены кнопки копирования
-│   └── widgets/
-│       └── password_entry.py
-└── main.py                           
+│   ├── main_window.py
+│   ├── widgets/
+│   │   ├── password_entry.py
+│   │   ├── toast.py
+│   │   ├── clipboard_preview.py
+│   │   └── audit_viewer.py
+│   └── dialogs/
+│       ├── export_dialog.py
+│       ├── import_dialog.py
+│       └── sharing_dialog.py
+└── main.py
 
 tests/                                 
-├── test_clipboard_service.py         # Тесты для Sprint 4
-├── test_argon2_params.py             
-├── test_pbkdf2_consistency.py       
+├── test_sprint4_clipboard.py
+├── test_sprint5_audit.py
+├── test_sprint6.py
 └── ...
 
-requirements.txt                      # Добавлены: pyperclip, pywin32, pyobjc, argon2-cffi
+##  Установка и запуск
 
+### Виртуальное окружение
 
-python -m pytest tests/ -v
-сприт 2
-python -m pytest tests/test_argon2_params.py tests/test_pbkdf2_consistency.py tests/test_timing_resistance.py tests/test_key_cache.py -v
-
-
-спринт 3
-python -m pytest tests/test_vault_encryption.py tests/test_config.py tests/test_events.py -v
-
-
-спринт 4
-pytest tests/test_clipboard_service.py -v
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
+pip install -r requirements.txt
+python main.py

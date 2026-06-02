@@ -55,6 +55,15 @@ class MainWindow:
         self._entry_id_map = {}
         self._display_order_ids = []
 
+        # Sprint 7: security service handles (None until login)
+        self._activity_monitor = None
+        self._auto_lock = None
+        self._panic_mode = None
+        self._lock_overlay = None
+        self._security_tick_id = None
+        # Sprint 7: system tray (None until setup_ui completes)
+        self._system_tray = None
+
         self.setup_ui()
         self.events.subscribe(EventType.CLIPBOARD_COPIED, self._on_clipboard_copied)
         self.events.subscribe(EventType.CLIPBOARD_CLEARED, self._on_clipboard_cleared)
@@ -72,9 +81,7 @@ class MainWindow:
         # Основной фрейм
         self.main_frame = ttk.Frame(self.root)
         self.main_frame.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
-        main_frame = self.main_frame
-
-        # Настройка сетки для main_frame
+        main_frame = self.main_frame        # Настройка сетки для main_frame
         main_frame.grid_rowconfigure(2, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)  # колонка с таблицей растягивается
 
@@ -140,6 +147,10 @@ class MainWindow:
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.grid(row=1, column=0, sticky='ew')
 
+        # Sprint 7: System Tray (TRAY-1)
+        # Initialise early so the user can minimise-to-tray immediately.
+        self._init_system_tray()
+
     def setup_menu(self):
         """Настройка меню"""
         menubar = tk.Menu(self.root)
@@ -187,6 +198,10 @@ class MainWindow:
         menubar.add_cascade(label="Вид", menu=view_menu)
         view_menu.add_command(label="Обновить", command=self.refresh_entries, accelerator="F5")
         view_menu.add_command(label="Настройки", command=self.show_settings)
+        view_menu.add_command(
+            label="Настройки безопасности",
+            command=self.show_security_settings,
+        )
 
         # Справка
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -435,7 +450,7 @@ class MainWindow:
         from src.gui.widgets.password_entry import PasswordEntry
         pass_entry = PasswordEntry(dialog)
         pass_entry.pack(fill=tk.X, padx=20, pady=(0, 10))
-        pass_entry.focus()
+        pass_entry.focus_force()
 
         status_var = tk.StringVar(value="")
         ttk.Label(dialog, textvariable=status_var, foreground="red").pack()
@@ -451,10 +466,16 @@ class MainWindow:
             ok = self.auth_service.login(pwd)
             pass_entry.clear()
             if ok:
+                # ВАЖНО: Сохраняем мастер-пароль после успешного входа
+                self.master_password = pwd
+                print(f"[DEBUG] Мастер-пароль установлен после успешного входа: {bool(self.master_password)}")
+                
                 self._init_audit_logger(pwd)
                 self._set_import_export_menu_state(tk.NORMAL)
                 dialog.destroy()
                 self.refresh_entries()
+                # Sprint 7: start security services after successful login
+                self._init_security()
                 self._update_import_export_menu_state()
             else:
                 status_var.set("Неверный пароль")
@@ -987,6 +1008,92 @@ class MainWindow:
         ttk.Button(btn_row, text="Сохранить", command=save_custom).pack(side=tk.LEFT, padx=4)
         ttk.Button(btn_row, text="Закрыть", command=dialog.destroy).pack(side=tk.LEFT, padx=4)
 
+    def show_security_settings(self):
+        """Настройки безопасности Sprint 7: автоблокировка и stealth mode."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Настройки безопасности")
+        dialog.geometry("440x260")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        security_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(security_tab, text="Security")
+
+        timeout_raw = self.settings_adapter.get("auto_lock_timeout", 300)
+        try:
+            timeout_sec = int(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_sec = 300
+        timeout_min = max(1, min(30, timeout_sec // 60 if timeout_sec >= 60 else 5))
+
+        stealth_raw = self.settings_adapter.get("stealth_mode", False)
+        if isinstance(stealth_raw, str):
+            stealth_default = stealth_raw.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            stealth_default = bool(stealth_raw)
+
+        ttk.Label(
+            security_tab,
+            text="Таймаут автоблокировки при неактивности (1–30 мин):",
+        ).pack(anchor=tk.W)
+        timeout_var = tk.IntVar(value=timeout_min)
+        timeout_spin = ttk.Spinbox(
+            security_tab,
+            from_=1,
+            to=30,
+            textvariable=timeout_var,
+            width=8,
+        )
+        timeout_spin.pack(anchor=tk.W, pady=(4, 12))
+
+        stealth_var = tk.BooleanVar(value=stealth_default)
+        ttk.Checkbutton(
+            security_tab,
+            text="Stealth mode (скрытое сообщение об ошибке при panic)",
+            variable=stealth_var,
+        ).pack(anchor=tk.W)
+
+        def save_security():
+            try:
+                minutes = int(timeout_var.get())
+            except (tk.TclError, ValueError):
+                messagebox.showerror(
+                    "Ошибка",
+                    "Укажите целое число минут от 1 до 30.",
+                    parent=dialog,
+                )
+                return
+            if minutes < 1 or minutes > 30:
+                messagebox.showerror(
+                    "Ошибка",
+                    "Таймаут автоблокировки: от 1 до 30 минут.",
+                    parent=dialog,
+                )
+                return
+
+            seconds = minutes * 60
+            self.settings_adapter.set("auto_lock_timeout", seconds)
+            self.settings_adapter.set("stealth_mode", stealth_var.get())
+
+            if hasattr(self, "_auto_lock") and self._auto_lock:
+                self.set_auto_lock_timeout(seconds)
+
+            if hasattr(self, "_panic_mode") and self._panic_mode:
+                self._panic_mode.configure(stealth_mode=stealth_var.get())
+
+            messagebox.showinfo("OK", "Настройки безопасности сохранены", parent=dialog)
+
+        btn_row = ttk.Frame(dialog)
+        btn_row.pack(pady=(0, 12))
+        ttk.Button(btn_row, text="Сохранить", command=save_security).pack(
+            side=tk.LEFT, padx=4
+        )
+        ttk.Button(btn_row, text="Закрыть", command=dialog.destroy).pack(
+            side=tk.LEFT, padx=4
+        )
 
     def show_about(self):
         """О программе"""
@@ -1173,11 +1280,15 @@ class MainWindow:
         if item:
             self.tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Редактировать", command=self.edit_entry)
+        menu.add_separator()
         menu.add_command(label="Copy Username", command=self.copy_selected_username)
         menu.add_command(label="Copy Password", command=self.copy_selected_password)
         menu.add_command(label="Copy All", command=self.copy_selected_all)
         menu.add_separator()
         menu.add_command(label="Поделиться записью...", command=self._share_selected_entry)
+        menu.add_separator()
+        menu.add_command(label="Удалить", command=self.delete_entry)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _share_selected_entry(self):
@@ -1281,6 +1392,8 @@ class MainWindow:
         """Обработка закрытия окна"""
         if self._clipboard_tick_id:
             self.root.after_cancel(self._clipboard_tick_id)
+        # Sprint 7: stop security services before closing
+        self._shutdown_security()
         if self.audit_logger:
             self.audit_logger.stop_periodic_verification()
         if self.clipboard_monitor:
@@ -1295,6 +1408,18 @@ class MainWindow:
             except:
                 pass
         self.root.destroy()
+
+    def hide_to_tray(self) -> None:
+        """Сворачивает окно в трей вместо полного завершения."""
+        if self._system_tray and self._system_tray.is_available():
+            self.root.withdraw()
+            self._system_tray.show_notification(
+                "CryptoSafe",
+                "Приложение свёрнуто в трей. Нажмите на иконку для восстановления.",
+            )
+            return
+        # Если трей недоступен — закрываем как обычно.
+        self.on_closing()
 
     # ==================== IMPORT/EXPORT METHODS (Sprint 6) ====================
 
@@ -1424,7 +1549,7 @@ class MainWindow:
             messagebox.showerror("Ошибка", f"Ошибка шаринга: {e}")
     def run(self):
         """Запуск приложения"""
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self.root.mainloop()
 
     # ------------------------------------------------------------------
@@ -1476,6 +1601,9 @@ class MainWindow:
             messagebox.showerror("Ошибка", "Экспорт недоступен: войдите в систему")
             return
 
+        # Debug: проверяем мастер-пароль
+        print(f"[DEBUG] show_export_dialog: master_password установлен = {bool(self.master_password)}")
+
         # Collect currently selected entry IDs from the tree
         selected_ids = []
         for iid in self.tree.selection():
@@ -1486,12 +1614,13 @@ class MainWindow:
             selected_ids.append(eid)
 
         try:
-            from src.gui.export_dialog import ExportDialog
+            from src.gui.dialogs.export_dialog import ExportDialog
             ExportDialog(
                 parent=self.root,
                 entry_manager=self.entry_manager,
                 exporter=exporter,
                 selected_ids=selected_ids,
+                master_password=self.master_password,
             )
         except Exception as exc:
             messagebox.showerror("Ошибка экспорта", str(exc))
@@ -1504,12 +1633,17 @@ class MainWindow:
         if importer is None:
             messagebox.showerror("Ошибка", "Импорт недоступен: войдите в систему")
             return
+        
+        # Debug: проверяем мастер-пароль
+        print(f"[DEBUG] show_import_dialog: master_password установлен = {bool(self.master_password)}")
+        
         try:
-            from src.gui.import_dialog import ImportDialog
+            from src.gui.dialogs.import_dialog import ImportDialog
             dlg = ImportDialog(
                 parent=self.root,
                 importer=importer,
                 entry_manager=self.entry_manager,
+                master_password=self.master_password,
             )
             # Refresh the entry list after the dialog closes
             self.root.wait_window(dlg.dialog)
@@ -1696,3 +1830,441 @@ class MainWindow:
         self._entry_id_map.clear()
         self._display_order_ids.clear()
         self.status_var.set("Сейф заблокирован")
+
+    # ------------------------------------------------------------------
+    # Sprint 7: Security Hardening — ActivityMonitor, AutoLock, PanicMode
+    # ------------------------------------------------------------------
+
+    def _init_security(self) -> None:
+        """Initialise Sprint 7 security services after successful login.
+
+        Called from the login dialog after the master password is verified.
+        All imports are lazy so the security module is only loaded when
+        the vault is actually unlocked.
+        """
+        try:
+            from src.core.security.auto_lock import AutoLockService
+            from src.core.security.activity_monitor import ActivityMonitor
+            from src.core.security.panic_mode import PanicMode
+
+            # ---- ActivityMonitor ----
+            self._activity_monitor = ActivityMonitor()
+            self._activity_monitor.register_activity_callback(
+                self._on_security_activity
+            )
+
+            # ---- AutoLockService ----
+            self._auto_lock = AutoLockService(
+                self._activity_monitor,
+                clipboard_service=self.clipboard_service,
+                audit_logger=self.audit_logger,
+            )
+            self._auto_lock.register_lock_callback(self._on_auto_lock)
+            self._auto_lock.register_unlock_callback(self._on_auto_unlock)
+
+            # Apply timeout from settings (seconds); default 300 s = 5 min
+            try:
+                timeout_raw = self.settings_adapter.get("auto_lock_timeout")
+                if timeout_raw:
+                    self._auto_lock.set_lock_timeout(int(timeout_raw))
+            except Exception:
+                pass
+
+            self._auto_lock.start()
+
+            # ---- PanicMode ----
+            # Config for PanicMode (stealth mode)
+            panic_config = {}
+            try:
+                stealth_cfg = self.settings_adapter.get("stealth_mode", False)
+                if isinstance(stealth_cfg, str):
+                    stealth_on = stealth_cfg.strip().lower() in ("1", "true", "yes", "on")
+                else:
+                    stealth_on = bool(stealth_cfg)
+                panic_config["stealth_mode"] = stealth_on
+            except Exception:
+                panic_config["stealth_mode"] = False
+
+            self._panic_mode = PanicMode(
+                clipboard_service=self.clipboard_service,
+                audit_logger=self.audit_logger,
+                config=panic_config,
+            )
+            self._panic_mode.register_panic_callback(self._on_panic_activated)
+            self._panic_mode.register_recovery_callback(self._on_panic_recovered)
+            # Register Ctrl+Shift+Esc hotkey (best-effort; requires `keyboard` lib)
+            self._panic_mode.register_hotkey("ctrl+shift+esc")
+
+            # Bind Tkinter-level fallback for panic (works without `keyboard` lib)
+            self.root.bind_all("<Control-Shift-Escape>", self._on_panic_hotkey)
+
+            # Start the idle-time polling loop (every 10 s)
+            self._security_tick_id = None
+            self._start_security_tick()
+
+            self.logger_print("[Security] Sprint 7 security services initialised")
+
+        except Exception as exc:
+            self.logger_print(f"[Security] Could not initialise security services: {exc}")
+
+    # ---- helpers ----
+
+    def logger_print(self, msg: str) -> None:
+        """Thin wrapper so security code can log without importing logging."""
+        print(msg)
+
+    def _start_security_tick(self) -> None:
+        """Schedule a recurring idle-time check every 10 seconds."""
+        self._security_tick()
+
+    def _security_tick(self) -> None:
+        """Periodic callback: update status bar with idle time."""
+        try:
+            if hasattr(self, "_activity_monitor") and self._activity_monitor:
+                idle = self._activity_monitor.get_idle_time()
+                idle_str = self._activity_monitor.get_idle_time_formatted()
+                locked = (
+                    hasattr(self, "_auto_lock")
+                    and self._auto_lock is not None
+                    and self._auto_lock.is_locked()
+                )
+                if not locked:
+                    # Show idle time in status bar only when vault is open
+                    if self.is_vault_unlocked():
+                        self.status_var.set(
+                            f"Бездействие: {idle_str}  |  "
+                            + self.status_var.get().split("|")[-1].strip()
+                            if "|" in self.status_var.get()
+                            else f"Бездействие: {idle_str}"
+                        )
+        except Exception:
+            pass
+        finally:
+            # Reschedule
+            self._security_tick_id = self.root.after(10_000, self._security_tick)
+
+    def _stop_security_tick(self) -> None:
+        """Cancel the periodic security tick."""
+        if hasattr(self, "_security_tick_id") and self._security_tick_id:
+            self.root.after_cancel(self._security_tick_id)
+            self._security_tick_id = None
+
+    # ---- event handlers ----
+
+    def _on_security_activity(self, event) -> None:
+        """Called by ActivityMonitor whenever user input is detected."""
+        # If the vault is locked and user interacts, prompt for unlock
+        if (
+            hasattr(self, "_auto_lock")
+            and self._auto_lock is not None
+            and self._auto_lock.is_locked()
+        ):
+            self.root.after(0, self._prompt_unlock_after_activity)
+
+    def _on_auto_lock(self) -> None:
+        """Called by AutoLockService when the idle timeout fires."""
+        self.root.after(0, self._apply_lock_ui)
+
+    def _on_auto_unlock(self) -> None:
+        """Called by AutoLockService after a successful unlock."""
+        self.root.after(0, self._apply_unlock_ui)
+
+    def _on_panic_activated(self) -> None:
+        """Called by PanicMode when panic is triggered."""
+        self.root.after(0, self._apply_panic_ui)
+
+    def _on_panic_recovered(self) -> None:
+        """Called by PanicMode after recovery."""
+        self.root.after(0, self._apply_unlock_ui)
+
+    def _on_panic_hotkey(self, _event=None) -> None:
+        """Tkinter-level Ctrl+Shift+Esc handler (fallback for no `keyboard` lib)."""
+        if hasattr(self, "_panic_mode") and self._panic_mode:
+            self._panic_mode.activate()
+        else:
+            # Panic mode not initialised — just lock
+            self._apply_lock_ui()
+
+    # ---- UI state changes ----
+
+    def _apply_lock_ui(self) -> None:
+        """Lock the vault and show the security overlay."""
+        # Lock via auth service
+        if self.auth_service:
+            try:
+                self.auth_service.logout()
+            except Exception:
+                pass
+        
+        # ВАЖНО: Сбрасываем мастер-пароль при блокировке
+        self.master_password = None
+        print(f"[DEBUG] Мастер-пароль сброшен при блокировке")
+
+        # Clear clipboard
+        if self.clipboard_service:
+            try:
+                self.clipboard_service.on_vault_lock()
+            except Exception:
+                pass
+
+        # Clear the entry list
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self._entry_id_map.clear()
+        self._display_order_ids.clear()
+
+        # Disable import/export menu
+        self._set_import_export_menu_state(tk.DISABLED)
+
+        # Show lock overlay
+        self._show_lock_overlay()
+
+        self.status_var.set("🔒 Сейф заблокирован (автоблокировка)")
+        self.toast.show("Сейф заблокирован автоматически", "warning")
+
+    def _apply_unlock_ui(self) -> None:
+        """Restore UI after unlock."""
+        self._hide_lock_overlay()
+        self._set_import_export_menu_state(tk.NORMAL)
+        self.status_var.set("Сейф разблокирован")
+        self.refresh_entries()
+
+    def _apply_panic_ui(self) -> None:
+        """Immediate UI response to panic mode activation."""
+        # Hide all top-level windows
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tk.Toplevel):
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
+
+        self._apply_lock_ui()
+        self.status_var.set("🚨 Паника — сейф заблокирован")
+
+    # ---- lock overlay ----
+
+    def _show_lock_overlay(self) -> None:
+        """Display a full-window overlay that blocks access while locked."""
+        if hasattr(self, "_lock_overlay") and self._lock_overlay:
+            return  # Already shown
+
+        overlay = tk.Toplevel(self.root)
+        overlay.title("CryptoSafe — Заблокировано")
+        overlay.attributes("-topmost", True)
+        overlay.resizable(False, False)
+        overlay.protocol("WM_DELETE_WINDOW", lambda: None)  # Prevent close
+
+        # Size and position to cover the main window
+        self.root.update_idletasks()
+        x = self.root.winfo_x()
+        y = self.root.winfo_y()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        overlay.geometry(f"{w}x{h}+{x}+{y}")
+
+        # Content
+        frame = ttk.Frame(overlay, padding=40)
+        frame.pack(expand=True)
+
+        ttk.Label(
+            frame,
+            text="🔒",
+            font=("Arial", 64),
+        ).pack(pady=(0, 16))
+
+        ttk.Label(
+            frame,
+            text="CryptoSafe заблокирован",
+            font=("Arial", 18, "bold"),
+        ).pack()
+
+        ttk.Label(
+            frame,
+            text="Введите мастер-пароль для продолжения",
+            font=("Arial", 11),
+            foreground="#555",
+        ).pack(pady=(8, 24))
+
+        from src.gui.widgets.password_entry import PasswordEntry
+        pwd_entry = PasswordEntry(frame, show_generator=False)
+        pwd_entry.pack(fill=tk.X, pady=(0, 12))
+        pwd_entry.focus()
+
+        status_var = tk.StringVar()
+        ttk.Label(frame, textvariable=status_var, foreground="red").pack()
+
+        def do_unlock(_event=None):
+            pwd = pwd_entry.get()
+            if not pwd:
+                status_var.set("Введите пароль")
+                return
+            if self.auth_service and self.auth_service.login(pwd):
+                # ВАЖНО: Сохраняем мастер-пароль после успешной разблокировки
+                self.master_password = pwd
+                print(f"[DEBUG] Мастер-пароль установлен после разблокировки: {bool(self.master_password)}")
+                
+                pwd_entry.clear()
+                self._hide_lock_overlay()
+                # Re-init audit logger with fresh password
+                self._init_audit_logger(pwd)
+                # Reset auto-lock timer
+                if hasattr(self, "_auto_lock") and self._auto_lock:
+                    self._auto_lock.unlock(pwd)
+                self._apply_unlock_ui()
+            else:
+                pwd_entry.clear()
+                status_var.set("Неверный пароль")
+
+        pwd_entry.entry.bind("<Return>", do_unlock)
+        ttk.Button(frame, text="Разблокировать", command=do_unlock).pack(pady=(8, 0))
+
+        self._lock_overlay = overlay
+
+    def _hide_lock_overlay(self) -> None:
+        """Remove the lock overlay."""
+        if hasattr(self, "_lock_overlay") and self._lock_overlay:
+            try:
+                self._lock_overlay.destroy()
+            except Exception:
+                pass
+            self._lock_overlay = None
+
+    def _prompt_unlock_after_activity(self) -> None:
+        """If locked and user is active, bring the overlay to front."""
+        if hasattr(self, "_lock_overlay") and self._lock_overlay:
+            try:
+                self._lock_overlay.lift()
+                self._lock_overlay.focus_force()
+            except Exception:
+                pass
+
+    # ---- public API ----
+
+    def lock_vault(self) -> None:
+        """Manually lock the vault (e.g. from menu or tray)."""
+        if hasattr(self, "_auto_lock") and self._auto_lock:
+            self._auto_lock.lock("manual")
+        else:
+            self._apply_lock_ui()
+
+    def set_auto_lock_timeout(self, seconds: int) -> None:
+        """Change the auto-lock idle timeout at runtime.
+
+        Args:
+            seconds: Idle seconds before auto-lock (60–28800).
+        """
+        if hasattr(self, "_auto_lock") and self._auto_lock:
+            self._auto_lock.set_lock_timeout(seconds)
+
+    def _shutdown_security(self) -> None:
+        """Stop all Sprint 7 security services on application exit."""
+        self._stop_security_tick()
+
+        if hasattr(self, "_panic_mode") and self._panic_mode:
+            try:
+                self._panic_mode.unregister_hotkey()
+            except Exception:
+                pass
+
+        if hasattr(self, "_auto_lock") and self._auto_lock:
+            try:
+                self._auto_lock.stop()
+            except Exception:
+                pass
+
+        if hasattr(self, "_activity_monitor") and self._activity_monitor:
+            try:
+                self._activity_monitor.stop()
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Sprint 7: System Tray (TRAY-1 … TRAY-4)
+    # ------------------------------------------------------------------
+
+    def _init_system_tray(self) -> None:
+        """Create and start the system tray icon.
+
+        Called once from ``setup_ui`` so the tray is available even before
+        the user logs in.  The icon reflects the locked state at all times.
+        """
+        try:
+            from src.gui.system_tray import SystemTray
+
+            self._system_tray = SystemTray(
+                root=self.root,
+                on_show=self._tray_show_window,
+                on_lock=self.lock_vault,
+                on_unlock=self._tray_unlock,
+                on_quick_search=self._tray_quick_search,
+                on_settings=self.show_settings,
+                on_clear_clipboard=self._clear_clipboard_from_tray,
+                on_panic_mode=self._panic_mode_from_tray,
+                on_exit=self.on_closing,
+            )
+            self._system_tray.start()
+
+            # Minimise to tray instead of closing
+            self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+
+        except Exception as exc:
+            print(f"[SystemTray] Could not initialise: {exc}")
+
+    def _on_window_close(self) -> None:
+        """Intercept the window close button — minimise to tray if available."""
+        if self._system_tray and self._system_tray.is_available():
+            self.root.withdraw()  # Hide window, keep running in tray
+            if self._system_tray:
+                self._system_tray.show_notification(
+                    "CryptoSafe",
+                    "Приложение свёрнуто в трей. Нажмите на иконку для восстановления.",
+                )
+        else:
+            self.on_closing()
+
+    def _tray_show_window(self) -> None:
+        """Restore the main window from the tray."""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _tray_unlock(self) -> None:
+        """Show the login dialog from the tray."""
+        self._tray_show_window()
+        if not self.is_vault_unlocked():
+            self.show_login_dialog()
+
+    def _tray_quick_search(self) -> None:
+        """Open a quick-search popup from the tray."""
+        self._tray_show_window()
+        # Reuse the existing search bar — just focus it
+        try:
+            self.search_var.set("")
+            # Find the search Entry widget and focus it
+            for widget in self.root.winfo_children():
+                if isinstance(widget, ttk.Frame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ttk.Entry):
+                            child.focus_set()
+                            break
+        except Exception:
+            pass
+
+    def _clear_clipboard_from_tray(self):
+        """Очистить буфер из трея"""
+        if self.clipboard_service:
+            self.clipboard_service.clear_clipboard("tray")
+
+    def _panic_mode_from_tray(self):
+        """Активировать Panic Mode из трея"""
+        if self._panic_mode:
+            self._panic_mode.activate("tray")
+
+    def _update_tray_lock_state(self, locked: bool) -> None:
+        """Sync the tray icon with the current lock state."""
+        if self._system_tray:
+            try:
+                self._system_tray.set_locked(locked)
+            except Exception:
+                pass

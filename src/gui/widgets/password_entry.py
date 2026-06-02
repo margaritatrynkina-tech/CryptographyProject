@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 import secrets
 import string
+
+from src.core.clipboard.clipboard_service import ClipboardService
 class PasswordEntry(ttk.Frame):
     def __init__(self, parent, show_generator=True, *args, **kwargs):
         super().__init__(parent)
