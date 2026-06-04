@@ -154,3 +154,37 @@ source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate     # Windows
 pip install -r requirements.txt
 python main.py
+
+## Тестирование
+
+Для запуска тестов с измерением покрытия кода используйте pytest с плагином pytest-cov:
+
+```bash
+pytest --cov=src
+```
+
+Команда выполнит все тесты и покажет процент покрытия кода тестами. Для более детальной информации можно использовать:
+
+```bash
+pytest --cov=src --cov-report=html
+```
+
+Это создаст HTML отчет в папке `htmlcov/`, который можно открыть в браузере для визуального анализа покрытия кода.
+
+Для запуска тестов конкретного модуля:
+```bash
+pytest tests/test_sprint4_clipboard.py --cov=src/core/clipboard
+```
+
+### Генерация исполняемого файла
+
+Для сборки standalone .exe файла используйте pyinstaller с созданным spec файлом:
+
+```bash
+pyinstaller cryptosafe.spec
+```
+
+Или напрямую через pyinstaller:
+```bash
+pyinstaller --onefile --windowed --name="CryptoSafe Manager" main.py
+```

@@ -235,3 +235,210 @@ def test_recovery_shutdown_clears_clipboard():
 
     status_after = service.get_status()
     assert not status_after.get("active")
+
+
+# TEST-6: Clipboard copy blocks when vault is locked
+def test_clipboard_copy_blocks_when_locked():
+    """TEST: проверка блокировки при locked vault"""
+    adapter = DummyAdapter()
+    events = EventSystem()
+    config = DummyConfig()
+    
+    # Создаем сервис с vault в locked состоянии
+    service = ClipboardService(
+        adapter, 
+        events, 
+        config, 
+        is_vault_unlocked=lambda: False  # Vault is locked
+    )
+    
+    # Пытаемся скопировать при locked vault
+    try:
+        result = service.copy_to_clipboard("secret_password", data_type="password")
+        # Если не выбросило исключение, это ошибка
+        assert False, "Should raise PermissionError when vault is locked"
+    except PermissionError as e:
+        # Проверяем сообщение об ошибке
+        assert "locked" in str(e).lower()
+    
+    # Копирование должно быть заблокировано
+    assert adapter.data == "", "Clipboard should remain empty"
+    assert adapter.copy_count == 0, "Copy should not be called when vault is locked"
+    
+    # Проверяем, что событие блокировки было отправлено
+    # (опционально, если есть обработка событий)
+    
+    # Теперь создаем новый сервис с разблокированным vault
+    service_unlocked = ClipboardService(
+        adapter,
+        events,
+        config,
+        is_vault_unlocked=lambda: True  # Vault is unlocked
+    )
+    
+    # Пытаемся скопировать с разблокированным vault
+    result = service_unlocked.copy_to_clipboard("secret_password", data_type="password")
+    
+    # Теперь копирование должно работать
+    assert result is True, "Copy should work when vault is unlocked"
+    assert adapter.data == "secret_password", "Clipboard should contain password"
+    assert adapter.copy_count == 1, "Copy should be called when vault is unlocked"
+
+
+# TEST-7: Clipboard clear functionality
+def test_clipboard_clear_works():
+    """TEST: проверка очистки буфера"""
+    service, adapter, _ = _make_service(timeout=60)
+    service.set_auto_clear_timeout(60)
+    
+    # Сначала копируем данные
+    assert service.copy_to_clipboard("data_to_clear", data_type="password")
+    assert adapter.data == "data_to_clear"
+    
+    # Запоминаем счетчики
+    clear_count_before = adapter.clear_count
+    
+    # Очищаем clipboard через метод clear_clipboard()
+    result = service.clear_clipboard("test_clear")
+    
+    # Проверяем, что очистка выполнена
+    assert result is True, "clear_clipboard should return True"
+    assert adapter.data == "", "Clipboard should be empty after clear"
+    assert adapter.clear_count == clear_count_before + 1, "Clear count should increase"
+    
+    # Проверяем, что таймер очистки сброшен
+    # (зависит от реализации, проверяем если возможно)
+    if hasattr(service, '_clear_timer'):
+        assert service._clear_timer is None or not service._clear_timer.is_alive()
+
+
+def test_clipboard_clear_without_prior_copy():
+    """Дополнительный тест: очистка без предварительного копирования"""
+    service, adapter, _ = _make_service(timeout=60)
+    
+    # Запоминаем счетчики
+    clear_count_before = adapter.clear_count
+    
+    # Очищаем clipboard без предварительного копирования
+    result = service.clear_clipboard("direct_clear")
+    
+    # Очистка должна работать даже без предварительного копирования
+    assert result is True, "clear_clipboard should work without prior copy"
+    assert adapter.clear_count == clear_count_before + 1, "Clear should still be called"
+    assert adapter.data == "", "Clipboard should remain empty"
+
+
+def test_clipboard_double_clear():
+    """Тест повторной очистки"""
+    service, adapter, _ = _make_service(timeout=60)
+    service.set_auto_clear_timeout(60)
+    
+    # Копируем данные
+    assert service.copy_to_clipboard("test_data", data_type="password")
+    
+    # Очищаем первый раз
+    result1 = service.clear_clipboard("first_clear")
+    clear_count_after_first = adapter.clear_count
+    
+    # Очищаем второй раз
+    result2 = service.clear_clipboard("second_clear")
+    
+    # Обе очистки должны работать
+    assert result1 is True and result2 is True
+    assert adapter.clear_count == clear_count_after_first + 1
+    assert adapter.data == ""
+
+
+def test_clipboard_copy_after_clear():
+    """Тест копирования после очистки"""
+    service, adapter, _ = _make_service(timeout=60)
+    service.set_auto_clear_timeout(60)
+    
+    # Копируем, очищаем, затем копируем снова
+    assert service.copy_to_clipboard("first_data", data_type="password")
+    assert adapter.data == "first_data"
+    assert adapter.copy_count == 1
+    
+    assert service.clear_clipboard("clear_between")
+    assert adapter.data == ""
+    
+    assert service.copy_to_clipboard("second_data", data_type="password")
+    assert adapter.data == "second_data"
+    assert adapter.copy_count == 2
+    
+    # Проверяем, что первый таймер очистки отменен и запущен новый
+    # (это зависит от внутренней реализации)
+
+
+def test_clipboard_event_notifications():
+    """Тест уведомлений о событиях clipboard"""
+    service, adapter, events = _make_service(timeout=60)
+    
+    # Подписываемся на события (если есть система событий)
+    copy_events = []
+    clear_events = []
+    
+    def on_copy(event_data):
+        copy_events.append(event_data)
+    
+    def on_clear(event_data):
+        clear_events.append(event_data)
+    
+    # Пробуем подписаться на события, если система поддерживает
+    try:
+        events.subscribe(EventType.CLIPBOARD_COPY, on_copy)
+        events.subscribe(EventType.CLIPBOARD_CLEAR, on_clear)
+    except (AttributeError, NameError):
+        # Если система событий не поддерживает эти типы, пропускаем тест
+        pytest.skip("Event system doesn't support clipboard events")
+    
+    # Выполняем операции
+    service.copy_to_clipboard("test_with_events", data_type="password")
+    service.clear_clipboard("test_clear_with_events")
+    
+    # Проверяем, что события были отправлены
+    assert len(copy_events) >= 1, "CLIPBOARD_COPY event should be emitted"
+    assert len(clear_events) >= 1, "CLIPBOARD_CLEAR event should be emitted"
+    
+    # Проверяем данные в событиях (если доступны)
+    if copy_events and hasattr(copy_events[0], 'get'):
+        event_data = copy_events[0]
+        # Не проверяем само значение пароля из соображений безопасности
+        assert event_data.get('data_type') == 'password'
+
+
+def test_clipboard_timeout_zero():
+    """Тест clipboard с нулевым таймаутом (немедленная очистка)"""
+    service, adapter, _ = _make_service(timeout=0)
+    service.set_auto_clear_timeout(0)
+    
+    # Копируем с нулевым таймаутом
+    assert service.copy_to_clipboard("instant_clear", data_type="password")
+    
+    # Ждем немного чтобы убедиться в немедленной очистке
+    import time
+    time.sleep(0.1)
+    
+    # Clipboard должен быть очищен немедленно
+    assert adapter.data == "", "Clipboard should be cleared immediately with timeout=0"
+
+
+def test_clipboard_service_status():
+    """Тест получения статуса сервиса"""
+    service, adapter, _ = _make_service(timeout=60)
+    
+    # Получаем статус
+    status = service.get_status()
+    
+    # Проверяем базовые поля статуса
+    assert isinstance(status, dict)
+    assert 'active' in status
+    assert 'timeout_seconds' in status
+    
+    # Проверяем значения
+    assert status['active'] is True, "Service should be active"
+    assert status['timeout_seconds'] == 60, f"Timeout should be 60, got {status['timeout_seconds']}"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

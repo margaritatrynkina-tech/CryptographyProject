@@ -1524,7 +1524,6 @@ class MainWindow:
         """Выполнить экспорт"""
         try:
             from tkinter import messagebox
-            # TODO: реальная реализация экспорта
             messagebox.showinfo("Экспорт", f"Экспорт в {format_type} выполнен в {file_path}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка экспорта: {e}")

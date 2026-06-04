@@ -1,18 +1,30 @@
 # Core dependencies
-sqlite3  # встроенный
-tkinter  # встроенный
+# sqlite3  # встроенный
+# tkinter  # встроенный
 
-# Security (будут использоваться в следующих спринтах)
-cryptography>=41.0.0  # для AES-GCM в Sprint 3
-argon2-cffi>=21.3.0   # для Argon2 в Sprint 2
-pyperclip>=1.9.0      # fallback clipboard + Linux backend
-pywin32>=306; platform_system == "Windows"  # win32clipboard adapter
-pyobjc>=10.3; platform_system == "Darwin"   # NSPasteboard adapter
+# Security & Cryptography
+cryptography>=41.0.0       # AES-GCM encryption, key derivation
+argon2-cffi>=21.3.0        # Argon2id password hashing
+
+# Clipboard & Platform Integration
+pyperclip>=1.9.0           # Cross-platform clipboard access
+pywin32>=306; platform_system == "Windows"    # Windows clipboard adapter
+pyobjc>=10.3; platform_system == "Darwin"     # macOS NSPasteboard adapter
+
+# System Tray & GUI
+pystray>=0.19.0            # System tray icon support
+pillow>=10.0.0             # Image processing for icons
+
+# QR Code Generation
+qrcode[pil]>=7.4.0         # QR code generation with PIL support
 
 # Testing
-pytest>=7.4.0
-pytest-cov>=4.1.0
+pytest>=7.4.0              # Testing framework
+pytest-cov>=4.1.0          # Code coverage for pytest
 
-# Development
-black>=23.0.0
-mypy>=1.5.0
+# Packaging & Distribution
+pyinstaller>=6.0.0         # Create standalone executables
+
+# Development Tools
+black>=23.0.0              # Code formatting
+mypy>=1.5.0                # Static type checking

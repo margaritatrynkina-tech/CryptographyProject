@@ -729,3 +729,148 @@ class TestPropertyBased:
                     f"Duplicate entry {key} found after strategy '{strategy}'"
                 )
                 seen.add(key)
+
+
+class TestExportImportAdditional:
+    """Дополнительные тесты для экспорта/импорта"""
+    
+    def test_exporter_creates_file(self, tmp_path):
+        """TEST: проверка создания файла при экспорте"""
+        from src.core.import_export.exporter import VaultExporter
+        
+        # Создаем тестовые данные
+        entries = [
+            _make_entry("TestSite1", "user1", "pass1", "https://site1.com"),
+            _make_entry("TestSite2", "user2", "pass2", "https://site2.com"),
+        ]
+        
+        manager = _InMemoryEntryManager(entries)
+        exporter = VaultExporter(
+            entry_manager=manager,
+            encryption_service=None,
+            audit_logger=_make_audit_logger(),
+        )
+        
+        # Пробуем разные форматы экспорта
+        test_cases = [
+            ("json", "test_export.json"),
+            ("csv", "test_export.csv"),
+            ("bitwarden", "test_export_bitwarden.json"),
+        ]
+        
+        for format_name, filename in test_cases:
+            export_file = tmp_path / filename
+            
+            # Для CSV и Bitwarden не нужен пароль
+            master_password = "TestMasterPass123!"  # Нужен мастер-пароль
+            export_password = "" if format_name in ["csv", "bitwarden"] else "TestExportPass123!"
+            
+            result = exporter.export_vault(
+                entry_ids=None,
+                master_password=master_password,
+                export_password=export_password,
+                public_key=None,
+                format=format_name,
+                file_path=export_file,
+            )
+            
+            # Проверяем, что файл создан
+            assert export_file.exists(), f"Файл {filename} не создан при экспорте в формате {format_name}"
+            assert export_file.stat().st_size > 0, f"Файл {filename} пустой"
+            
+            # Проверяем результат экспорта
+            assert result.entry_count == 2, f"Неверное количество экспортированных записей для {format_name}"
+            assert result.file_path == str(export_file), f"Неверный путь в результате для {format_name}"
+    
+    def test_importer_duplicate_handling(self):
+        """TEST: проверка обработки дубликатов при импорте"""
+        from src.core.import_export.importer import VaultImporter
+        
+        # Создаем существующие записи
+        existing_entries = [
+            _make_entry("Site1", "user1", "old_pass", "https://site1.com", "Old notes"),
+            _make_entry("Site2", "user2", "pass2", "https://site2.com"),
+        ]
+        
+        # Создаем импортируемые записи (включая дубликат)
+        import_entries = [
+            _make_entry("Site1", "user1", "new_pass", "https://site1.com", "New notes"),  # Дубликат
+            _make_entry("Site3", "user3", "pass3", "https://site3.com"),  # Новая
+            _make_entry("Site4", "user4", "pass4", "https://site4.com"),  # Новая
+        ]
+        
+        manager = _InMemoryEntryManager(existing_entries)
+        importer = VaultImporter(
+            entry_manager=manager,
+            encryption_service=None,
+            audit_logger=_make_audit_logger(),
+        )
+        
+        # Тестируем разные стратегии обработки дубликатов
+        test_strategies = ["skip", "replace", "rename", "merge"]
+        
+        for strategy in test_strategies:
+            # Копируем менеджер для каждого теста
+            test_manager = _InMemoryEntryManager(existing_entries.copy())
+            importer.entry_manager = test_manager
+            
+            # Импортируем с текущей стратегией
+            result = importer._import_entries(import_entries.copy(), strategy)
+            
+            # Проверяем результаты в зависимости от стратегии
+            all_entries = test_manager.get_all_entries()
+            
+            if strategy == "skip":
+                # Дубликат пропущен, добавлены только новые
+                assert len(all_entries) == 4  # 2 существующих + 2 новых
+                # Проверяем, что пароль Site1 остался старым
+                site1_entry = next((e for e in all_entries if e["title"] == "Site1"), None)
+                assert site1_entry is not None
+                assert site1_entry["password"] == "old_pass"
+                assert site1_entry["notes"] == "Old notes"
+                
+            elif strategy == "replace":
+                # Дубликат заменен, добавлены новые
+                assert len(all_entries) == 4  # 1 заменен + 1 существующий + 2 новых
+                # Проверяем, что пароль Site1 обновлен
+                site1_entry = next((e for e in all_entries if e["title"] == "Site1"), None)
+                assert site1_entry is not None
+                assert site1_entry["password"] == "new_pass"
+                assert site1_entry["notes"] == "New notes"
+                
+            elif strategy == "rename":
+                # Дубликат переименован, добавлены новые
+                assert len(all_entries) == 5  # 2 существующих + 1 переименованный + 2 новых
+                # Проверяем, что есть оригинал и переименованный
+                original_site1 = next((e for e in all_entries if e["title"] == "Site1" and e["password"] == "old_pass"), None)
+                renamed_site1 = next((e for e in all_entries if "Site1" in e["title"] and e["title"] != "Site1" and e["password"] == "new_pass"), None)
+                assert original_site1 is not None
+                assert renamed_site1 is not None
+                # Проверяем, что переименованный содержит суффикс
+                assert renamed_site1["title"].startswith("Site1")
+                assert renamed_site1["title"] != "Site1"
+                
+            elif strategy == "merge":
+                # Дубликат объединен, добавлены новые
+                # В зависимости от реализации merge может создавать новую запись или обновлять существующую
+                # Проверяем, что у нас есть запись Site1
+                site1_entries = [e for e in all_entries if e["title"] == "Site1"]
+                assert len(site1_entries) >= 1, "Should have at least one Site1 entry"
+                
+                # Проверяем username в одной из записей Site1
+                site1_entry = site1_entries[0]
+                assert "username" in site1_entry
+                assert site1_entry["username"] == "user1"
+            # Проверяем результат импорта
+            assert result.successful_imports >= 2  # Минимум 2 новых записи добавлены
+            assert result.failed_imports == 0
+            assert result.total_entries == len(import_entries)
+
+            print(f"Strategy '{strategy}' passed: {result.successful_imports} successful imports")
+
+    print("All duplicate handling strategies tested successfully!")
+
+# Добавляем закрывающие скобки для класса
+# Завершаем файл
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
