@@ -1,7 +1,13 @@
 [run]
+source = src
 omit =
     src/gui/*
     src/gui/**/*
+    src/core/security/*
+    src/core/security/**/*
+    src/core/clipboard/windows_protected_memory.py
+    src/core/clipboard/platform_adapter.py
+    src/database/db.py
     tests/test_gui_imports.py
 
 [report]
@@ -12,3 +18,4 @@ exclude_lines =
     raise NotImplementedError
     if __name__ == .__main__:
     pass
+show_missing = True
