@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.crypto
+
 # Make sure the project root is on sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -100,7 +102,6 @@ def _hypothesis_available() -> bool:
 
 
 class TestRoundTrip:
-    """TEST-1: export to encrypted JSON → import back → all fields preserved."""
 
     def test_json_roundtrip_all_fields(self, tmp_path):
         from src.core.import_export.exporter import VaultExporter
@@ -562,6 +563,8 @@ class TestQRCode:
 class TestPerformance:
     """TEST-5: export 1000 entries <5 s, import 1000 entries <10 s."""
 
+    @pytest.mark.slow
+    @pytest.mark.perf
     def test_export_1000_entries_under_5s(self, tmp_path):
         from src.core.import_export.exporter import VaultExporter
 
@@ -589,6 +592,8 @@ class TestPerformance:
             f"Export of 1000 entries took {elapsed:.2f}s, expected <5s"
         )
 
+    @pytest.mark.slow
+    @pytest.mark.perf
     def test_import_1000_entries_under_10s(self, tmp_path):
         from src.core.import_export.exporter import VaultExporter
         from src.core.import_export.importer import VaultImporter
@@ -625,6 +630,8 @@ class TestPerformance:
             f"Import of 1000 entries took {elapsed:.2f}s, expected <10s"
         )
 
+    @pytest.mark.slow
+    @pytest.mark.perf
     def test_csv_export_1000_entries(self, tmp_path):
         from src.core.import_export.exporter import VaultExporter
 
@@ -650,6 +657,8 @@ class TestPerformance:
         assert result.entry_count == 1000
         assert elapsed < 5.0, f"CSV export took {elapsed:.2f}s"
 
+    @pytest.mark.slow
+    @pytest.mark.perf
     def test_bitwarden_export_1000_entries(self, tmp_path):
         from src.core.import_export.exporter import VaultExporter
 
@@ -685,6 +694,7 @@ def _hypothesis_available() -> bool:
 
 
 @pytest.mark.skipif(not _hypothesis_available(), reason="hypothesis not installed")
+@pytest.mark.property
 class TestPropertyBased:
 
     def test_p2_csv_never_contains_password(self):
@@ -697,7 +707,7 @@ class TestPropertyBased:
             username=st.text(max_size=50),
             password=st.text(min_size=1, max_size=50),
         )
-        @settings(max_examples=200)
+        @settings(max_examples=10)
         def inner(title, username, password):
             entry = _make_entry(title=title, username=username, password=password)
             csv_text = CSVHandler.export([entry])

@@ -1,3 +1,6 @@
+import pytest
+pytestmark = pytest.mark.crypto
+
 from src.core.crypto.key_derivation import KeyDerivation
 from src.core.config import ConfigManager
 def test_pbkdf2_consistency():

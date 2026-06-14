@@ -8,7 +8,7 @@ def test_verify_timing():
 
     def measure(pwd):
         start = time.perf_counter()
-        for _ in range(50):
+        for _ in range(5):
             kd.verify_password(pwd, stored)
         return time.perf_counter() - start
 

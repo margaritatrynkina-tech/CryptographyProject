@@ -59,3 +59,13 @@ def sample_entry_data():
         "notes": "This is a test entry",
         "tags": "test,important"
     }
+
+@pytest.fixture
+def fast_crypto_config():
+    """Фикстура с ускоренными параметрами криптографии для тестов."""
+    return {
+        "argon2_time": 1,           # вместо 3
+        "argon2_memory": 8192,      # вместо 65536
+        "argon2_parallelism": 1,    # вместо 4
+        "pbkdf2_iterations": 1000   # вместо 100000
+    }

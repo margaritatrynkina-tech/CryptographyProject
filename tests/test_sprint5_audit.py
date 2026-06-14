@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.crypto
+
 from src.core.audit.audit_logger import AuditLogger
 from src.core.audit.log_signer import AuditLogSigner
 from src.core.audit.log_verifier import AuditLogVerifier

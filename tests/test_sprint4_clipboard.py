@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.fast
+
 from src.core.clipboard.clipboard_service import ClipboardService
 from src.core.clipboard.platform_adapter import (
     ClipboardAdapter,

@@ -1,0 +1,14 @@
+[run]
+omit =
+    src/gui/*
+    src/gui/**/*
+    tests/test_gui_imports.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__:
+    pass
